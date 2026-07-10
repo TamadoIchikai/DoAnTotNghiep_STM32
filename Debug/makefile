@@ -60,8 +60,8 @@ all: main-build
 main-build: FULL_MACH_YEAHHH.elf secondary-outputs
 
 # Tool invocations
-FULL_MACH_YEAHHH.elf FULL_MACH_YEAHHH.map: $(OBJS) $(USER_OBJS) D:\Final\code\STM32F446\TEST\FULL_MACH_YEAHHH\STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "FULL_MACH_YEAHHH.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Final\code\STM32F446\TEST\FULL_MACH_YEAHHH\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="FULL_MACH_YEAHHH.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+FULL_MACH_YEAHHH.elf FULL_MACH_YEAHHH.map: $(OBJS) $(USER_OBJS) D:\Robotics\SCARA_Robot\STM32\STM32F446RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "FULL_MACH_YEAHHH.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Robotics\SCARA_Robot\STM32\STM32F446RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="FULL_MACH_YEAHHH.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -u _printf_float -u _scanf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

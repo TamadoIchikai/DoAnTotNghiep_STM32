@@ -26,16 +26,23 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <math.h>
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum {
+    UNIT_RAD,
+    UNIT_DEG
+} AngleUnit_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#ifndef M_PI
+#define M_PI 3.14159f
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -86,6 +93,7 @@ UART_HandleTypeDef huart2;
 
 #define M1_EN_PORT   GPIOB
 #define M1_EN_PIN    GPIO_PIN_8
+#define M1_STEP 3200
 
 // ======================================================
 // MOTOR 2 - TB6600
@@ -98,21 +106,10 @@ UART_HandleTypeDef huart2;
 
 #define M2_EN_PORT   GPIOB
 #define M2_EN_PIN    GPIO_PIN_9
+#define M2_STEP 1600
 
 // ======================================================
-// MOTOR 3 - DRV8825 / A4988
-// ======================================================
-#define M3_STEP_PORT GPIOB
-#define M3_STEP_PIN  GPIO_PIN_5
-
-#define M3_DIR_PORT  GPIOB
-#define M3_DIR_PIN   GPIO_PIN_4
-
-#define M3_EN_PORT   GPIOA
-#define M3_EN_PIN    GPIO_PIN_4
-
-// ======================================================
-// MOTOR 4 - DC TB6612
+// MOTOR 3 - DC TB6612
 // ======================================================
 #define DC_AIN1_PORT GPIOB
 #define DC_AIN1_PIN  GPIO_PIN_0
@@ -122,6 +119,21 @@ UART_HandleTypeDef huart2;
 
 #define DC_STBY_PORT GPIOC
 #define DC_STBY_PIN  GPIO_PIN_12
+
+// ======================================================
+// MOTOR 4 - DRV8825 / A4988
+// ======================================================
+#define M4_STEP_PORT GPIOB
+#define M4_STEP_PIN  GPIO_PIN_5
+
+#define M4_DIR_PORT  GPIOB
+#define M4_DIR_PIN   GPIO_PIN_4
+
+#define M4_EN_PORT   GPIOA
+#define M4_EN_PIN    GPIO_PIN_4
+#define M4_STEP 800
+
+
 
 // PWM: PB14 / TIM12_CH1
 
@@ -166,12 +178,12 @@ UART_HandleTypeDef huart2;
 
 #define M1_EN_RUN GPIO_PIN_RESET
 #define M2_EN_RUN GPIO_PIN_RESET
-#define M3_EN_RUN GPIO_PIN_RESET
+#define M4_EN_RUN GPIO_PIN_RESET
 
 // Nếu motor quay ngược ý muốn thì đổi SET thành RESET ở motor đó.
-#define M1_DIR_FORWARD GPIO_PIN_SET
-#define M2_DIR_FORWARD GPIO_PIN_SET
-#define M3_DIR_FORWARD GPIO_PIN_SET
+#define M1_DIR_FORWARD GPIO_PIN_RESET
+#define M2_DIR_FORWARD GPIO_PIN_RESET
+#define M4_DIR_FORWARD GPIO_PIN_RESET
 
 typedef struct
 {
@@ -196,6 +208,7 @@ typedef struct
     uint32_t lastStepUs;
     uint32_t highStartUs;
     uint32_t currentIntervalUs;
+    uint32_t targetIntervalUs;
 
 } Stepper_t;
 
@@ -214,7 +227,8 @@ Stepper_t motor1 = {
     .stepHigh = 0,
     .lastStepUs = 0,
     .highStartUs = 0,
-    .currentIntervalUs = START_INTERVAL_US
+    .currentIntervalUs = START_INTERVAL_US,
+    .targetIntervalUs = DEFAULT_TARGET_INTERVAL // <-- ADD THIS LINE
 };
 
 Stepper_t motor2 = {
@@ -232,25 +246,27 @@ Stepper_t motor2 = {
     .stepHigh = 0,
     .lastStepUs = 0,
     .highStartUs = 0,
-    .currentIntervalUs = START_INTERVAL_US
+    .currentIntervalUs = START_INTERVAL_US,
+    .targetIntervalUs = DEFAULT_TARGET_INTERVAL // <-- ADD THIS LINE
 };
 
-Stepper_t motor3 = {
-    .name = "M3 DRV8825",
-    .stepPort = M3_STEP_PORT,
-    .stepPin = M3_STEP_PIN,
-    .dirPort = M3_DIR_PORT,
-    .dirPin = M3_DIR_PIN,
-    .enPort = M3_EN_PORT,
-    .enPin = M3_EN_PIN,
-    .enRunLevel = M3_EN_RUN,
-    .dirForwardLevel = M3_DIR_FORWARD,
+Stepper_t motor4 = {
+    .name = "M4 DRV8825",
+    .stepPort = M4_STEP_PORT,
+    .stepPin = M4_STEP_PIN,
+    .dirPort = M4_DIR_PORT,
+    .dirPin = M4_DIR_PIN,
+    .enPort = M4_EN_PORT,
+    .enPin = M4_EN_PIN,
+    .enRunLevel = M4_EN_RUN,
+    .dirForwardLevel = M4_DIR_FORWARD,
     .running = 0,
     .forward = 1,
     .stepHigh = 0,
     .lastStepUs = 0,
     .highStartUs = 0,
-    .currentIntervalUs = START_INTERVAL_US
+    .currentIntervalUs = START_INTERVAL_US,
+    .targetIntervalUs = DEFAULT_TARGET_INTERVAL // <-- ADD THIS LINE
 };
 
 // Encoder position
@@ -283,7 +299,7 @@ static void MX_TIM4_Init(void);
 static void MX_TIM12_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void Encoders_Update(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -324,6 +340,97 @@ GPIO_PinState Invert_PinState(GPIO_PinState s)
 {
     return (s == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
 }
+
+// ===============================================
+// Convert Count per Revolution (CPR) to angle (CPR is encoder pulse per revolution times 4
+// because current encoder reading function use both upper side and lower side of a pulse)
+// ===============================================
+float Encoder_To_Angle(int32_t counts, uint32_t ppr, AngleUnit_t unit) {
+	// usage: e.g 2000 PPR encoder and variable `en1_pos` for encoder output
+	// Encoder_To_Angle(en1_output, 2000, UNIT_DEG) to output degree and UNIT_RAD to output radian
+    // Multiply PPR by 4 to get Counts Per Revolution (x4 decoding)
+    float cpr = (float)(ppr * 4);
+
+    // Calculate the fractional rotation
+    float rotations = (float)counts / cpr;
+
+    // Convert to the requested unit
+    if (unit == UNIT_DEG) {
+        return rotations * 360.0f;
+    } else {
+        // Default to radians
+        return rotations * 2.0f * M_PI;
+    }
+}
+void delay_us(uint32_t us) {
+    // Approximate loop for an STM32 running at e.g., 72MHz or 84MHz.
+    // Adjust the multiplier if the speed is wildly incorrect.
+    uint32_t count = us * (SystemCoreClock / 1000000) / 5;
+    while(count--) {
+        __asm("nop");
+    }
+}
+
+void Run_Motor_Fixed_Time_Blocking(Stepper_t* motor, uint32_t pulses, uint8_t direction, float time_seconds) {
+    char msg[128];
+
+    // Prevent divide-by-zero or negative time errors
+    if (pulses == 0 || time_seconds <= 0.0f) {
+        return;
+    }
+
+    // 1. Calculate the required delay per pulse in microseconds
+    uint32_t total_time_us = (uint32_t)(time_seconds * 1000000.0f);
+    uint32_t delay_per_pulse_us = total_time_us / pulses;
+
+    // 2. Set direction and enable motor
+    GPIO_PinState dirState;
+    if (direction == 1) {
+        dirState = motor->dirForwardLevel;
+    } else {
+        dirState = (motor->dirForwardLevel == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+    }
+
+    HAL_GPIO_WritePin(motor->dirPort, motor->dirPin, dirState);
+    HAL_GPIO_WritePin(motor->enPort, motor->enPin, motor->enRunLevel);
+
+    sprintf(msg, "Running %s: %lu pulses in %.2f seconds...\r\n", motor->name, pulses, time_seconds);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+
+    sprintf(msg, "Calculated delay: %lu us/pulse\r\n", delay_per_pulse_us);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+
+    // Force an encoder update before moving
+    Encoders_Update();
+
+    // 3. Send exact number of pulses
+    for (uint32_t i = 0; i < pulses; i++) {
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_SET);
+        delay_us(STEP_HIGH_US);
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_RESET);
+
+        // Subtract the pulse high time from the total interval to maintain exact overall timing
+        if (delay_per_pulse_us > STEP_HIGH_US) {
+            delay_us(delay_per_pulse_us - STEP_HIGH_US);
+        }
+
+        // Update periodically to prevent 16-bit timer overflow (TIM3/TIM4)
+        if (i % 100 == 0) {
+            Encoders_Update();
+        }
+    }
+
+    // Force a final update after settling
+    HAL_Delay(100);
+    Encoders_Update();
+
+    sprintf(msg, "%s finished move.\r\n", motor->name);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+}
+
+
+
+
 
 // ======================================================
 // LIMIT FUNCTIONS
@@ -417,7 +524,7 @@ void Encoders_Update(void)
 
     enc1_pos += (int32_t)(now2 - tim2_last);
     enc2_pos += (int16_t)(now3 - tim3_last);
-    enc3_pos += (int16_t)(now4 - tim4_last);
+    enc4_pos += (int16_t)(now4 - tim4_last);
 
     tim2_last = now2;
     tim3_last = now3;
@@ -434,11 +541,11 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
         if (a == b)
         {
-            enc4_pos += DC_ENCODER_SIGN;
+            enc3_pos += DC_ENCODER_SIGN;
         }
         else
         {
-            enc4_pos -= DC_ENCODER_SIGN;
+            enc3_pos -= DC_ENCODER_SIGN;
         }
     }
 }
@@ -494,6 +601,13 @@ void Stepper_Start(Stepper_t *m, uint8_t motor_id, uint8_t forward)
     }
 #endif
 
+    // FIX: If the motor is already running in the requested direction, do nothing.
+    // This prevents the acceleration profile and timers from being abruptly reset.
+    if (m->running && m->forward == forward)
+    {
+        return;
+    }
+
     Stepper_SetDir(m, forward);
     Stepper_Enable(m);
 
@@ -535,17 +649,17 @@ void Stepper_Service(Stepper_t *m)
         m->highStartUs = now;
         m->lastStepUs = now;
 
-        if (m->currentIntervalUs > g_step_target_interval_us)
-        {
-            if (m->currentIntervalUs > (g_step_target_interval_us + ACCEL_STEP_US))
-            {
-                m->currentIntervalUs -= ACCEL_STEP_US;
-            }
-            else
-            {
-                m->currentIntervalUs = g_step_target_interval_us;
-            }
-        }
+        if (m->currentIntervalUs > m->targetIntervalUs)
+		{
+			if (m->currentIntervalUs > (m->targetIntervalUs + ACCEL_STEP_US))
+			{
+				m->currentIntervalUs -= ACCEL_STEP_US;
+			}
+			else
+			{
+				m->currentIntervalUs = m->targetIntervalUs;
+			}
+		}
     }
 }
 
@@ -553,7 +667,7 @@ void Stepper_All_Stop(void)
 {
     Stepper_Stop(&motor1);
     Stepper_Stop(&motor2);
-    Stepper_Stop(&motor3);
+    Stepper_Stop(&motor4);
 }
 
 // ======================================================
@@ -642,18 +756,85 @@ void Limit_Safety_Service(void)
         Stepper_Stop(&motor2);
     }
 
-    if (motor3.running && Limit4_IsTriggered())
-    {
-        UART_Printf("LIMIT3 triggered -> stop M3\r\n");
-        Stepper_Stop(&motor3);
-    }
-
     if (g_dc_running && Limit3_IsTriggered())
     {
-        UART_Printf("LIMIT4 triggered -> stop M4 DC\r\n");
+        UART_Printf("LIMIT3 triggered -> stop M3 DC\r\n");
         DC_Stop();
     }
+
+    if (motor4.running && Limit4_IsTriggered())
+    {
+        UART_Printf("LIMIT4 triggered -> stop M4\r\n");
+        Stepper_Stop(&motor4);
+    }
 #endif
+}
+
+
+// ======================================================
+// RETURN TO HOME
+// ======================================================
+// Helper function to home a single motor
+void Home_Stepper_Motor(Stepper_t *motor, uint8_t motor_id, uint8_t search_forward)
+{
+    char msg[64];
+    sprintf(msg, "Homing %s...\r\n", motor->name);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+
+    // 1. Set search direction and enable motor
+    Stepper_SetDir(motor, search_forward);
+    Stepper_Enable(motor);
+
+    // 2. Step until limit switch is triggered
+    while (!Motor_Limit_IsTriggered(motor_id))
+    {
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_SET);
+        delay_us(STEP_HIGH_US);
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_RESET);
+
+        // Use the target interval to control homing speed
+        delay_us(motor->targetIntervalUs);
+    }
+
+    // 3. Reverse direction to back off
+    uint8_t backoff_forward = search_forward ? 0 : 1;
+    Stepper_SetDir(motor, backoff_forward);
+
+    // 4. Step until the limit switch is completely released
+    while (Motor_Limit_IsTriggered(motor_id))
+    {
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_SET);
+        delay_us(STEP_HIGH_US);
+        HAL_GPIO_WritePin(motor->stepPort, motor->stepPin, GPIO_PIN_RESET);
+
+        delay_us(motor->targetIntervalUs);
+    }
+
+    // 5. Ensure motor completely stops
+    Stepper_Stop(motor);
+
+    sprintf(msg, "%s homing complete.\r\n", motor->name);
+    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+}
+
+// Main initialization routine
+void Robot_Init_State(void)
+{
+    UART_Printf("--- STARTING ROBOT INITIALIZATION ---\r\n");
+
+    // Motor 1: CCW (t1 -> forward = 1), Limit ID = 1
+    Home_Stepper_Motor(&motor1, 1, 1);
+
+    // Motor 2: CW (n2 -> forward = 0), Limit ID = 2
+    Home_Stepper_Motor(&motor2, 2, 0);
+
+    // Motor 4: CCW (t4 -> forward = 1), Limit ID = 4
+    Home_Stepper_Motor(&motor4, 4, 1);
+
+    // Optional: Reset encoders now that physical zero is established
+    Encoders_Reset();
+
+    UART_Printf("--- INITIALIZATION COMPLETE ---\r\n");
 }
 
 // ======================================================
@@ -662,13 +843,28 @@ void Limit_Safety_Service(void)
 
 void Print_Status(void)
 {
-    UART_Printf("ENC1=%ld | ENC2=%ld | ENC3=%ld | ENC4=%ld | ",
+    UART_Printf("------------------------\r\n");
+
+    UART_Printf("ENC1=%ld | ENC2=%ld | ENC3=%ld | ENC4=%ld\r\n",
                 (long)enc1_pos,
                 (long)enc2_pos,
                 (long)enc3_pos,
                 (long)enc4_pos);
 
-    UART_Printf("LIM=%d%d%d%d%d%d | ",
+    // Calculate angles in degrees
+	float ang1 = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_DEG);
+	float ang2 = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_DEG);
+	float ang3 = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
+	float ang4 = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
+
+	// Print calculated angles
+	UART_Printf("ANG1=%.2f | ANG2=%.2f | ANG3=%.2f | ANG4=%.2f\r\n",
+				ang1,
+				ang2,
+				ang3,
+				ang4);
+
+    UART_Printf("LIM=%d%d%d%d%d%d\r\n",
                 Limit1_IsTriggered(),
                 Limit2_IsTriggered(),
                 Limit3_IsTriggered(),
@@ -676,14 +872,17 @@ void Print_Status(void)
                 Limit5_IsTriggered(),
                 Limit6_IsTriggered());
 
-    UART_Printf("M=%d%d%d%d | MAG=%d | STEP_US=%lu | DC_PWM=%u\r\n",
-                motor1.running,
-                motor2.running,
-                motor3.running,
-                g_dc_running,
-                g_magnet_on,
-                (unsigned long)g_step_target_interval_us,
-                g_dc_pwm);
+    UART_Printf("M=%d%d%d%d | MAG=%d | US(1,2,4)=%lu,%lu,%lu | DC_PWM=%u\r\n",
+                    motor1.running,
+                    motor2.running,
+                    g_dc_running,
+                    motor4.running,
+                    g_magnet_on,
+                    (unsigned long)motor1.targetIntervalUs,
+                    (unsigned long)motor2.targetIntervalUs,
+                    (unsigned long)motor4.targetIntervalUs,
+                    g_dc_pwm);
+    UART_Printf("------------------------\r\n");
 }
 
 void Print_Help(void)
@@ -697,7 +896,7 @@ void Print_Help(void)
     UART_Printf("m0          : tat nam cham\r\n");
     UART_Printf("z           : reset encoder\r\n");
     UART_Printf("status      : in trang thai\r\n");
-    UART_Printf("v200        : set toc do step, us nho hon = nhanh hon\r\n");
+    UART_Printf("v1200       : set M1 speed (200us). Nho hon = nhanh hon\r\n");
     UART_Printf("w700        : set PWM DC 0..999\r\n");
     UART_Printf("help        : hien bang lenh\r\n");
     UART_Printf("========================\r\n");
@@ -767,18 +966,29 @@ void Process_Command(char *cmd)
     }
 
     if (cmd[0] == 'v')
-    {
-        int val = atoi(&cmd[1]);
+	{
+		int id = cmd[1] - '0';
+		int val = atoi(&cmd[2]);
 
-        if (val < 80) val = 80;
-        if (val > 3000) val = 3000;
+		if (id < 1 || id > 4) {
+			 UART_Printf("Format: v<id><us> (e.g. v1200 for M1 at 200us)\r\n");
+			 return;
+		}
 
-        g_step_target_interval_us = (uint32_t)val;
+		if (val < 80) val = 80;
+		if (val > 3000) val = 3000;
 
-        UART_Printf("Set step target interval = %lu us\r\n",
-                    (unsigned long)g_step_target_interval_us);
-        return;
-    }
+		if (id == 1) motor1.targetIntervalUs = val;
+		else if (id == 2) motor2.targetIntervalUs = val;
+		else if (id == 4) motor4.targetIntervalUs = val;
+		else {
+			 UART_Printf("Unknown motor id\r\n");
+			 return;
+		}
+
+		UART_Printf("M%d target step interval = %d us\r\n", id, val);
+		return;
+	}
 
     if (cmd[0] == 'w')
     {
@@ -797,6 +1007,25 @@ void Process_Command(char *cmd)
         UART_Printf("Set DC PWM = %u\r\n", g_dc_pwm);
         return;
     }
+    if (cmd[0] == 'r') {
+            // Example format: r<motor_id> <pulses> <time_in_seconds>
+            // Example command: "r2 1600 5.0"
+
+            int id;
+            uint32_t pulses;
+            float time_sec;
+
+            // Parse the string for 3 variables
+            if (sscanf(cmd, "r%d_%lu_%f", &id, &pulses, &time_sec) == 3) {
+                if (id == 1) Run_Motor_Fixed_Time_Blocking(&motor1, pulses, 1, time_sec);
+                else if (id == 2) Run_Motor_Fixed_Time_Blocking(&motor2, pulses, 1, time_sec);
+                else if (id == 4) Run_Motor_Fixed_Time_Blocking(&motor4, pulses, 1, time_sec);
+                else UART_Printf("Unknown motor id\r\n");
+            } else {
+                UART_Printf("Invalid format. Use: r<id> <pulses> <time_sec>\r\n");
+            }
+            return;
+        }
 
     char action = cmd[0];
     int id = atoi(&cmd[1]);
@@ -805,8 +1034,8 @@ void Process_Command(char *cmd)
     {
         if (id == 1) Stepper_Start(&motor1, 1, 1);
         else if (id == 2) Stepper_Start(&motor2, 2, 1);
-        else if (id == 3) Stepper_Start(&motor3, 3, 1);
-        else if (id == 4) DC_Start(1);
+        else if (id == 3) DC_Start(1);
+        else if (id == 4) Stepper_Start(&motor4, 3, 1);
         else UART_Printf("Unknown motor id\r\n");
 
         return;
@@ -816,8 +1045,8 @@ void Process_Command(char *cmd)
     {
         if (id == 1) Stepper_Start(&motor1, 1, 0);
         else if (id == 2) Stepper_Start(&motor2, 2, 0);
-        else if (id == 3) Stepper_Start(&motor3, 3, 0);
-        else if (id == 4) DC_Start(0);
+        else if (id == 3) DC_Start(0);
+        else if (id == 4) Stepper_Start(&motor4, 3, 0);
         else UART_Printf("Unknown motor id\r\n");
 
         return;
@@ -827,8 +1056,8 @@ void Process_Command(char *cmd)
     {
         if (id == 1) Stepper_Stop(&motor1);
         else if (id == 2) Stepper_Stop(&motor2);
-        else if (id == 3) Stepper_Stop(&motor3);
-        else if (id == 4) DC_Stop();
+        else if (id == 3) DC_Stop();
+        else if (id == 4) Stepper_Stop(&motor4);
         else UART_Printf("Unknown motor id\r\n");
 
         return;
@@ -883,7 +1112,7 @@ void UART_Command_Service(void)
                 char c0 = (char)tolower((unsigned char)rx_cmd[0]);
                 char c1 = rx_cmd[1];
 
-                if ((c0 == 't' || c0 == 'n' || c0 == 's' || c0 == 'm') &&
+                if ((c0 == 't' || c0 == 'n' || c0 == 's' || c0 == 'm'|| c0 == 'c') &&
                     (c1 >= '0' && c1 <= '9'))
                 {
                     rx_cmd[rx_index] = '\0';
@@ -940,7 +1169,7 @@ int main(void)
   // Trạng thái an toàn ban đầu
   Stepper_Disable(&motor1);
   Stepper_Disable(&motor2);
-  Stepper_Disable(&motor3);
+  Stepper_Disable(&motor4);
 
   HAL_GPIO_WritePin(DC_STBY_PORT, DC_STBY_PIN, GPIO_PIN_RESET);
   DC_Stop();
@@ -952,6 +1181,8 @@ int main(void)
   UART_Printf("\r\nSTM32F446RE FULL ROBOT CONTROL READY\r\n");
   UART_Printf("Pinout loaded from your schematic.\r\n");
 
+  Robot_Init_State();
+
   Print_Help();
   Print_Status();
 
@@ -960,27 +1191,32 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
-    /* USER CODE END WHILE */
-	    UART_Command_Service();
+    {
+      /* USER CODE END WHILE */
+          UART_Command_Service();
 
-	    Encoders_Update();
+          Encoders_Update();
 
-	    Limit_Safety_Service();
+          Limit_Safety_Service();
 
-	    Stepper_Service(&motor1);
-	    Stepper_Service(&motor2);
-	    Stepper_Service(&motor3);
+          Stepper_Service(&motor1);
+          Stepper_Service(&motor2);
+          Stepper_Service(&motor4);
 
-	    static uint32_t lastStatus = 0;
+          static uint32_t lastStatus = 0;
 
-	    if ((HAL_GetTick() - lastStatus) >= 500)
-	    {
-	        Print_Status();
-	        lastStatus = HAL_GetTick();
-	    }
-    /* USER CODE BEGIN 3 */
-  }
+          if ((HAL_GetTick() - lastStatus) >= 500)
+          {
+              // FIX: Only print status if all stepper motors are completely stopped.
+              // This prevents UART blocking from starving the motor pulses.
+              if (!motor1.running && !motor2.running && !motor4.running)
+              {
+                  Print_Status();
+              }
+              lastStatus = HAL_GetTick();
+          }
+      /* USER CODE BEGIN 3 */
+    }
   /* USER CODE END 3 */
 }
 
