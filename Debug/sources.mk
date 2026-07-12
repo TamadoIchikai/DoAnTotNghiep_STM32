@@ -24,5 +24,12 @@ C_DEPS :=
 SUBDIRS := \
 Core/Src \
 Core/Startup \
+Drivers/CMSIS_DSP/Source/BasicMathFunctions \
+Drivers/CMSIS_DSP/Source/CommonTables \
+Drivers/CMSIS_DSP/Source/FastMathFunctions \
+Drivers/CMSIS_DSP/Source/MatrixFunctions \
+Drivers/CMSIS_DSP/Source/QuaternionMathFunctions \
+Drivers/CMSIS_DSP/Source/StatisticsFunctions \
+Drivers/CMSIS_DSP/Source/SupportFunctions \
 Drivers/STM32F4xx_HAL_Driver/Src \
 
