@@ -35,13 +35,14 @@ void Print_Status(void)
 	float ang2 = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_DEG);
 	float ang3 = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
 	float ang4 = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
+	float dist4 = Angle_To_Distance(ang4, M4_Pulley_Linear_Dia, UNIT_DEG);
 
 	// Print calculated angles
-	UART_Printf("ANG1=%.2f | ANG2=%.2f | ANG3=%.2f | ANG4=%.2f\r\n",
+	UART_Printf("ANG1=%.2f | ANG2=%.2f | ANG3=%.2f | ANG4=%.2f (DIST=%.2fmm)\r\n",
 				ang1,
 				ang2,
 				ang3,
-				ang4);
+				ang4,dist4);
 
     UART_Printf("LIM=%d%d%d%d%d%d\r\n",
                 Limit1_IsTriggered(),

@@ -14,6 +14,7 @@
 
 extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim12;
+extern float M4_Pulley_Linear_Dia;
 
 void Print_Status(void);
 void Print_Help(void);

@@ -98,3 +98,13 @@ float Encoder_To_Angle(int32_t counts, uint32_t ppr, AngleUnit_t unit) {
         return rotations * 2.0f * M_PI;
     }
 }
+
+float Angle_To_Distance(float angle, float pulley_diameter_mm, AngleUnit_t unit) {
+    if (unit == UNIT_DEG) {
+        // Circumference is diameter * pi. Distance per degree is Circumference / 360
+        return angle * (pulley_diameter_mm * M_PI) / 360.0f;
+    } else {
+        // For radians: radius = diameter / 2. Distance = angle * radius
+        return angle * (pulley_diameter_mm / 2.0f);
+    }
+}

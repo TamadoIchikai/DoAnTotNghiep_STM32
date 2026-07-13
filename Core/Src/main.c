@@ -143,6 +143,33 @@ volatile int32_t enc4_pos = 0;
 
 static float32_t robot_Init_Angle[4] = {-10.0f,40.0f,0.0f,-10.0f};
 
+#define L1 0.2304f
+#define L2 0.1347f
+#define D1 0.230f
+#define D2 0.049f
+#define D3 0.210f
+#define D4 0.097f
+#define D_EE 0.350f
+
+float32_t M1_Lim_Deg = 180.0f;
+float32_t M2_Lim_Deg = 200.0f;
+float32_t M4_Lim_mm  = 95.0f;
+float32_t M4_Pulley_Linear_Dia = 13.0f;
+
+static float32_t M_home[16] = {01.0f, 0.0f, 1.0f, L1+L2,
+					     	   	0.0f, 1.0f, 0.0f, 0.0f,
+					    		0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+					    		0.0f, 0.0f, 0.0f, 1.0f};
+
+
+static float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
+						   	0.0f, 0.0f, 0.0f, 0.0f,
+							1.0f, 1.0f, 1.0f, 0.0f,
+							0.0f, 0.0f, 0.0f, 0.0f,
+							0.0f, -L1, -(L1+L2), 0.0f,
+							0.0f, 0.0f, 0.0f, -1.0f};
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -318,6 +345,7 @@ int main(void)
           Encoders_Update();
 
           Limit_Safety_Service();
+          Software_Limit_Service();
 
           Stepper_Service(&motor1);
           Stepper_Service(&motor2);

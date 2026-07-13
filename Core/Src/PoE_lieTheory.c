@@ -205,3 +205,45 @@ void log_SE3(const float32_t T[16], float32_t expMat[16]) {
     expMat[4] = omgtheta_mat[3]; expMat[5] = omgtheta_mat[4]; expMat[6] = omgtheta_mat[5]; expMat[7] = v[1];
     expMat[8] = omgtheta_mat[6]; expMat[9] = omgtheta_mat[7]; expMat[10] = omgtheta_mat[8]; expMat[11] = v[2];
 }
+
+void adjoint_T(const float32_t T[16], float32_t AdT[36]) {
+    float32_t R[9];
+    float32_t p[3];
+
+    // 1. [R, p] = TransMat_To_Rp(T);
+    TransMat_To_Rp(T, R, p);
+
+    // Clear AdT matrix to zeros (equivalent to zeros(3) for top-right)
+    for (int i = 0; i < 36; i++) {
+        AdT[i] = 0.0f;
+    }
+
+    // 2. Place R in the Top-Left and Bottom-Right blocks
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            float32_t val = R[r * 3 + c];
+            AdT[r * 6 + c] = val;               // Top-Left R
+            AdT[(r + 3) * 6 + (c + 3)] = val;   // Bottom-Right R
+        }
+    }
+
+    // 3. vector_To_so3(p)
+    float32_t p_skew[9];
+    Vec_to_so3(p, p_skew);
+
+    // 4. vector_To_so3(p) * R
+    float32_t pR[9];
+    arm_matrix_instance_f32 mat_p_skew, mat_R, mat_pR;
+    arm_mat_init_f32(&mat_p_skew, 3, 3, p_skew);
+    arm_mat_init_f32(&mat_R, 3, 3, R);
+    arm_mat_init_f32(&mat_pR, 3, 3, pR);
+
+    arm_mat_mult_f32(&mat_p_skew, &mat_R, &mat_pR);
+
+    // 5. Place the (p_skew * R) result in the Bottom-Left block
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            AdT[(r + 3) * 6 + c] = pR[r * 3 + c];
+        }
+    }
+}

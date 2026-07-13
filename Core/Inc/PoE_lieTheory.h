@@ -24,6 +24,7 @@ void exp_so3(const float32_t mat_so3[9], float32_t R[9]);
 void exp_se3(const float32_t se3Mat[16], float32_t T[16]);
 void log_SO3(const float32_t R[9], float32_t omgtheta[9]);
 void log_SE3(const float32_t T[16], float32_t expMat[16]);
+void adjoint_T(const float32_t T[16], float32_t AdT[36]);
 
 
 #endif /* INC_POE_LIETHEORY_H_ */

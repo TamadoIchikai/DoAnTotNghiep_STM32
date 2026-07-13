@@ -20,5 +20,8 @@
 typedef float32_t float16_t;
 #endif
 void ForwardKinematics_Space(const float32_t *M, const float32_t *Slist, const float32_t *thetalist, uint8_t num_joints, float32_t *T_out);
+void Compute_Twist_Error(const float32_t Td[16], const float32_t T_EE[16], float32_t V_EE[6]);
+void jacobianSpace(const float32_t *Slist, const float32_t *thetalist, uint8_t num_joints, float32_t *Js);
+void DLS(const float32_t *Js, uint8_t num_joints, float32_t *Js_Inverse);
 
 #endif /* INC_POE_KINEMATICS_H_ */

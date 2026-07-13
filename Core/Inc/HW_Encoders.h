@@ -34,5 +34,6 @@ void Encoders_Reset(void);
 void Encoders_Update(void);
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
 float Encoder_To_Angle(int32_t counts, uint32_t ppr, AngleUnit_t unit);
+float Angle_To_Distance(float angle, float pulley_diameter_mm, AngleUnit_t unit);
 
 #endif /* INC_HW_ENCODERS_H_ */

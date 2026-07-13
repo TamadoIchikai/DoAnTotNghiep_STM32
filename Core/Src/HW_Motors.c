@@ -50,7 +50,7 @@ void DC_Start(uint8_t forward)
 		HAL_GPIO_WritePin(DC_AIN2_PORT, DC_AIN2_PIN, GPIO_PIN_SET);
 	}
 
-	__HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, g_dc_pwm);
+	__HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, 700);
 
 	UART_Printf("M4 DC START %s PWM=%u\r\n",
 				forward ? "FORWARD" : "REVERSE",
