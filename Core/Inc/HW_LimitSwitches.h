@@ -11,11 +11,12 @@
 #include <stdint.h>
 #include "main.h"
 #include <math.h>
+#include "arm_math.h"
 
-extern float M1_Lim_Deg;
-extern float M2_Lim_Deg;
-extern float M4_Lim_mm;
-extern float M4_Pulley_Linear_Dia;
+extern float32_t M1_Lim_Deg;
+extern float32_t M2_Lim_Deg;
+extern float32_t M4_Lim_mm;
+extern float32_t M4_Pulley_Linear_Dia;
 
 uint8_t Limit1_IsTriggered(void);
 uint8_t Limit2_IsTriggered(void);
