@@ -213,5 +213,16 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+#include "HW_Motors.h"
+extern TIM_HandleTypeDef htim6;
 
+void TIM6_DAC_IRQHandler(void)
+{
+    if (__HAL_TIM_GET_FLAG(&htim6, TIM_FLAG_UPDATE)) {
+        __HAL_TIM_CLEAR_FLAG(&htim6, TIM_FLAG_UPDATE);
+        Stepper_Service(&motor1);
+        Stepper_Service(&motor2);
+        Stepper_Service(&motor4);
+    }
+}
 /* USER CODE END 1 */

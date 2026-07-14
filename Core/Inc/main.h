@@ -36,7 +36,11 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+#include "arm_math.h"
+extern float32_t M_home[16];
+extern float32_t S[24];
+extern float32_t M4_Pulley_Linear_Dia;
+extern float32_t robot_Init_Angle[4];
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

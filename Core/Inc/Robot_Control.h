@@ -11,8 +11,16 @@
 #include <stdint.h>
 #include "main.h"
 #include "HW_Motors.h"
+#include "arm_math.h"
 
 void Home_Stepper_Motor(Stepper_t *motor, uint8_t motor_id, uint8_t search_forward);
-void Robot_Init_State(float init_Angle[4]); // Updated signature
+void Robot_Init_State(float32_t init_Angle[4]); // Updated signature
+
+void Robot_Set_IK_Target(const float32_t T_d[16]);
+void Robot_IK_Stop(void);
+void Robot_IK_Task_20ms(void);
+
+void Robot_Set_Joint_Target(uint8_t motor_id, uint8_t dir, float32_t target_deg);
+void Robot_Joint_Task_Service(void);
 
 #endif /* INC_ROBOT_CONTROL_H_ */

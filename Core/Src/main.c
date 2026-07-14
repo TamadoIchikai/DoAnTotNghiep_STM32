@@ -64,6 +64,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim12;
+TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
@@ -141,7 +142,7 @@ volatile int32_t enc2_pos = 0;
 volatile int32_t enc3_pos = 0;
 volatile int32_t enc4_pos = 0;
 
-static float32_t robot_Init_Angle[4] = {-10.0f,40.0f,0.0f,-10.0f};
+float32_t robot_Init_Angle[4] = {-15.0f,38.0f,0.0f,-10.0f};
 
 #define L1 0.2304f
 #define L2 0.1347f
@@ -153,16 +154,16 @@ static float32_t robot_Init_Angle[4] = {-10.0f,40.0f,0.0f,-10.0f};
 
 float32_t M1_Lim_Deg = 180.0f;
 float32_t M2_Lim_Deg = 200.0f;
-float32_t M4_Lim_mm  = 95.0f;
+float32_t M4_Lim_mm  = 85.0f;
 float32_t M4_Pulley_Linear_Dia = 13.0f;
 
-static float32_t M_home[16] = {01.0f, 0.0f, 1.0f, L1+L2,
+float32_t M_home[16] = {01.0f, 0.0f, 0.0f, L1+L2,
 					     	   	0.0f, 1.0f, 0.0f, 0.0f,
 					    		0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
 					    		0.0f, 0.0f, 0.0f, 1.0f};
 
 
-static float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
+float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
 						   	0.0f, 0.0f, 0.0f, 0.0f,
 							1.0f, 1.0f, 1.0f, 0.0f,
 							0.0f, 0.0f, 0.0f, 0.0f,
@@ -310,6 +311,23 @@ int main(void)
   /* USER CODE BEGIN 2 */
   DWT_Delay_Init();
 
+  // --- Initialize TIM6 for 50us (20kHz) Stepper Interrupt ---
+  // SystemClock is 16MHz. 16MHz / 800 = 20kHz (50us)
+  __HAL_RCC_TIM6_CLK_ENABLE();
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 0;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 799; 
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  HAL_TIM_Base_Init(&htim6);
+  
+  // Set highest interrupt priority and enable
+  HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
+  
+  // Start the hardware timer interrupt
+  HAL_TIM_Base_Start_IT(&htim6);
+
   HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_1);
   __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, 0);
 
@@ -346,24 +364,23 @@ int main(void)
 
           Limit_Safety_Service();
           Software_Limit_Service();
+          Robot_Joint_Task_Service();
 
-          Stepper_Service(&motor1);
-          Stepper_Service(&motor2);
-          Stepper_Service(&motor4);
+          UART_TX_Service();
 
           static uint32_t lastStatus = 0;
 
           if ((HAL_GetTick() - lastStatus) >= 500)
           {
-              // FIX: Only print status if all stepper motors are completely stopped.
-              // This prevents UART blocking from starving the motor pulses.
-              if (!motor1.running && !motor2.running && !motor4.running)
-              {
-                  Print_Status();
-              }
+              Print_Status();
               lastStatus = HAL_GetTick();
           }
       /* USER CODE BEGIN 3 */
+//          static uint32_t lastIK = 0;
+//          if (HAL_GetTick() - lastIK >= 20) {
+//              Robot_IK_Task_20ms();
+//              lastIK = HAL_GetTick();
+//          }
     }
   /* USER CODE END 3 */
 }

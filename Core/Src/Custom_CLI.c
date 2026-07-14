@@ -15,56 +15,119 @@
 #include <ctype.h>  // For tolower
 #include <stdarg.h>
 #include <stdio.h>
+#include "PoE_Kinematics.h"
+#include "Robot_Control.h"
+
+uint8_t e_stop_active = 0;
 char rx_cmd[32];
 uint8_t rx_index = 0;
+
+extern Stepper_t motor1;
+extern Stepper_t motor2;
+extern Stepper_t motor4;
+
+extern uint8_t g_dc_running;
+extern uint8_t g_dc_forward;
+
+// --- TX Ring Buffer ---
+#define TX_BUF_SIZE 512
+static volatile uint8_t tx_buf[TX_BUF_SIZE];
+static volatile uint16_t tx_head = 0;
+static volatile uint16_t tx_tail = 0;
+
+void UART_PutChar(char ch) {
+    uint16_t next = (tx_head + 1) % TX_BUF_SIZE;
+    if (next == tx_tail) {
+        // Buffer full - must drain one char to make room
+        while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TXE) == RESET) {}
+        huart2.Instance->DR = tx_buf[tx_tail];
+        tx_tail = (tx_tail + 1) % TX_BUF_SIZE;
+    }
+    tx_buf[tx_head] = (uint8_t)ch;
+    tx_head = next;
+}
+
+void UART_TX_Service(void) {
+    // Drain characters from ring buffer without blocking
+    while (tx_head != tx_tail && __HAL_UART_GET_FLAG(&huart2, UART_FLAG_TXE)) {
+        huart2.Instance->DR = tx_buf[tx_tail];
+        tx_tail = (tx_tail + 1) % TX_BUF_SIZE;
+    }
+}
+
+void UART_PutString(const char* str) {
+    while (*str) {
+        UART_PutChar(*str++);
+    }
+}
+
+void UART_PutInt(long val) {
+    char buf[12];
+    int i = 0;
+    long v = val;
+    if (v < 0) { UART_PutChar('-'); v = -v; }
+    if (v == 0) { buf[i++] = '0'; }
+    while (v > 0) { buf[i++] = (v % 10) + '0'; v /= 10; }
+    while (i > 0) { UART_PutChar(buf[--i]); }
+}
+
+void UART_PutFloatFast(float val) {
+    int i = (int)val;
+    int f = (int)(fabsf(val) * 100.0f) % 100;
+    if (val < 0.0f && i == 0) {
+        UART_PutChar('-');
+    }
+    UART_PutInt(i);
+    UART_PutChar('.');
+    if (f < 10) UART_PutChar('0');
+    UART_PutInt(f);
+}
 
 extern void PoETest(void);
 
 void Print_Status(void)
 {
-    UART_Printf("------------------------\r\n");
+    UART_PutString("------------------------\r\n");
 
-    UART_Printf("ENC1=%ld | ENC2=%ld | ENC3=%ld | ENC4=%ld\r\n",
-                (long)enc1_pos,
-                (long)enc2_pos,
-                (long)enc3_pos,
-                (long)enc4_pos);
+    UART_PutString("ENC1="); UART_PutInt(enc1_pos);
+    UART_PutString(" | ENC2="); UART_PutInt(enc2_pos);
+    UART_PutString(" | ENC3="); UART_PutInt(enc3_pos);
+    UART_PutString(" | ENC4="); UART_PutInt(enc4_pos);
+    UART_PutString("\r\n");
 
-    // Calculate angles in degrees
-	float ang1 = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_DEG);
-	float ang2 = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_DEG);
-	float ang3 = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
-	float ang4 = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
-	float dist4 = Angle_To_Distance(ang4, M4_Pulley_Linear_Dia, UNIT_DEG);
+    float ang1 = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_DEG);
+    float ang2 = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_DEG);
+    float ang3 = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
+    float ang4 = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
+    float dist4 = Angle_To_Distance(ang4, M4_Pulley_Linear_Dia, UNIT_DEG);
 
-	// Print calculated angles
-	UART_Printf("ANG1=%.2f | ANG2=%.2f | ANG3=%.2f | ANG4=%.2f (DIST=%.2fmm)\r\n",
-				ang1,
-				ang2,
-				ang3,
-				ang4,dist4);
+    UART_PutString("ANG1="); UART_PutFloatFast(ang1);
+    UART_PutString(" | ANG2="); UART_PutFloatFast(ang2);
+    UART_PutString(" | ANG3="); UART_PutFloatFast(ang3);
+    UART_PutString(" | ANG4="); UART_PutFloatFast(ang4);
+    UART_PutString(" (DIST="); UART_PutFloatFast(dist4); UART_PutString("mm)\r\n");
 
-    UART_Printf("LIM=%d%d%d%d%d%d\r\n",
-                Limit1_IsTriggered(),
-                Limit2_IsTriggered(),
-                Limit3_IsTriggered(),
-                Limit4_IsTriggered(),
-                Limit5_IsTriggered(),
-                Limit6_IsTriggered());
+    UART_PutString("LIM=");
+    UART_PutInt(Limit1_IsTriggered());
+    UART_PutInt(Limit2_IsTriggered());
+    UART_PutInt(Limit3_IsTriggered());
+    UART_PutInt(Limit4_IsTriggered());
+    UART_PutInt(Limit5_IsTriggered());
+    UART_PutInt(Limit6_IsTriggered());
+    UART_PutString("\r\n");
 
-    UART_Printf("M=%d%d%d%d | MAG=%d | US(1,2,4)=%lu,%lu,%lu | DC_PWM=%u\r\n",
-                    motor1.running,
-                    motor2.running,
-                    g_dc_running,
-                    motor4.running,
-                    g_magnet_on,
-                    (unsigned long)motor1.targetIntervalUs,
-                    (unsigned long)motor2.targetIntervalUs,
-                    (unsigned long)motor4.targetIntervalUs,
-                    g_dc_pwm);
-
-
-    UART_Printf("------------------------\r\n");
+    UART_PutString("M=");
+    UART_PutInt(motor1.running);
+    UART_PutInt(motor2.running);
+    UART_PutInt(g_dc_running);
+    UART_PutInt(motor4.running);
+    UART_PutString(" | MAG="); UART_PutInt(g_magnet_on);
+    UART_PutString(" | US(1,2,4)=");
+    UART_PutInt(motor1.targetIntervalUs); UART_PutChar(',');
+    UART_PutInt(motor2.targetIntervalUs); UART_PutChar(',');
+    UART_PutInt(motor4.targetIntervalUs);
+    UART_PutString(" | DC_PWM="); UART_PutInt(g_dc_pwm);
+    UART_PutString("\r\n------------------------\r\n");
 }
 
 void Print_Help(void)
@@ -101,6 +164,12 @@ void Process_Command(char *cmd)
         return;
     }
 
+    if (e_stop_active)
+    {
+        UART_Printf("ERR: EMERGENCY STOP ACTIVE. TYPE 'xxx' TO DEACTIVATE.\r\n");
+        return;
+    }
+
     if (strcmp(cmd, "help") == 0)
     {
         Print_Help();
@@ -125,10 +194,46 @@ void Process_Command(char *cmd)
         return;
     }
 
-    if (cmd[0] == 'x')
+    if (strncmp(cmd, "ang", 3) == 0)
     {
-        Stepper_All_Stop();
-        DC_Stop();
+        uint8_t motor_id = cmd[3] - '0';
+        char dir_char = cmd[4];
+        float32_t target = atof(&cmd[5]);
+        
+        if (motor_id >= 1 && motor_id <= 4 && (dir_char == 'n' || dir_char == 't')) {
+            uint8_t dir = (dir_char == 't') ? 1 : 0;
+            Robot_Set_Joint_Target(motor_id, dir, target);
+            UART_Printf("Moving M%d %s to %.2f deg\r\n", motor_id, dir ? "POS" : "NEG", target);
+        } else {
+            UART_Printf("Invalid ang command. Format: ang[id][n/t][deg]\r\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "fk") == 0)
+    {
+        float32_t thetalist[4];
+        thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD);
+        thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD);
+        thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD);
+        float32_t m4_deg = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
+        thetalist[3] = Angle_To_Distance(m4_deg, M4_Pulley_Linear_Dia, UNIT_DEG) / 1000.0f;
+
+        float32_t T_EE[16];
+        ForwardKinematics_Space(M_home, S, thetalist, 4, T_EE);
+
+        UART_Printf("Forward Kinematics T_EE (4x4):\r\n");
+        for (int i = 0; i < 4; i++) {
+            UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n", 
+                T_EE[i*4], T_EE[i*4+1], T_EE[i*4+2], T_EE[i*4+3]);
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "re") == 0)
+    {
+        extern float32_t robot_Init_Angle[4];
+        Robot_Init_State(robot_Init_Angle);
         return;
     }
 
@@ -190,6 +295,33 @@ void Process_Command(char *cmd)
         UART_Printf("Set DC PWM = %u\r\n", g_dc_pwm);
         return;
     }
+    // runtime<id>_<t|n>1_<pulses>_<seconds>  e.g. runtime1_n1_3200_5 = motor1 reverse 3200 pulses in 5s
+    if (strncmp(cmd, "runtime", 7) == 0) {
+        int id = 0;
+        char dir_ch = 0;
+        int dummy = 0;
+        uint32_t pulses = 0;
+        int seconds = 0;
+        // Parse: runtime<id>_<t|n><digit>_<pulses>_<seconds>
+        if (sscanf(cmd, "runtime%d_%c%d_%lu_%d", &id, &dir_ch, &dummy, &pulses, &seconds) == 5) {
+            uint8_t forward = (dir_ch == 't') ? 1 : 0;
+            Stepper_t* mptr = NULL;
+            if (id == 1) mptr = &motor1;
+            else if (id == 2) mptr = &motor2;
+            else if (id == 4) mptr = &motor4;
+
+            if (mptr && seconds > 0 && pulses > 0) {
+                UART_Printf("runtime M%d %s %lu pulses in %ds\r\n", id, forward ? "FWD" : "REV", pulses, seconds);
+                Run_Motor_Fixed_Time_Blocking(mptr, pulses, forward, (float)seconds);
+            } else {
+                UART_Printf("Invalid motor id, pulses or time\r\n");
+            }
+        } else {
+            UART_Printf("Format: runtime<id>_<t|n>1_<pulses>_<seconds> (e.g. runtime1_n1_3200_5)\r\n");
+        }
+        return;
+    }
+
     if (cmd[0] == 'r') {
             // Example format: r<motor_id> <pulses> <time_in_seconds>
             // Example command: "r2 1600 5.0"
@@ -249,61 +381,76 @@ void Process_Command(char *cmd)
     UART_Printf("Unknown command: %s\r\n", cmd);
 }
 
+static uint8_t x_count = 0;
+
 void UART_Command_Service(void)
 {
-    uint8_t ch;
+    // Clear overrun error if set (reading SR then DR clears ORE on STM32F4)
+    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE)) {
+        volatile uint32_t tmp = huart2.Instance->SR;
+        tmp = huart2.Instance->DR;
+        (void)tmp;
+    }
 
-    while (HAL_UART_Receive(&huart2, &ch, 1, 0) == HAL_OK)
+    uint8_t ch;
+    while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
     {
-        if (ch == '\r' || ch == '\n' || ch == ' ')
+        ch = (uint8_t)(huart2.Instance->DR & 0xFF);
+        // 1. Universal Stop detection
+        if (ch == 'x' || ch == 'X') {
+            x_count++;
+            if (x_count == 1) {
+                Stepper_All_Stop();
+                DC_Stop();
+                Robot_IK_Stop();
+                UART_Printf("\r\n[!] SOFT STOP\r\n> ");
+            } else if (x_count == 3) {
+                if (e_stop_active == 0) {
+                    e_stop_active = 1;
+                    Stepper_All_Stop();
+                    DC_Stop();
+                    Robot_IK_Stop();
+                    UART_Printf("\r\n[!] EMERGENCY STOP ACTIVATED!\r\n> ");
+                } else {
+                    e_stop_active = 0;
+                    UART_Printf("\r\n[!] EMERGENCY STOP DEACTIVATED!\r\n> ");
+                }
+                x_count = 0;
+            }
+            rx_index = 0; // Clear buffer
+            continue;
+        } else {
+            x_count = 0;
+        }
+
+        // 2. Process normal text buffer
+        if (ch == '\r' || ch == '\n')
         {
             if (rx_index > 0)
             {
+                UART_Printf("\r\n");
                 rx_cmd[rx_index] = '\0';
-                UART_Printf("CMD: %s\r\n", rx_cmd);
                 Process_Command(rx_cmd);
-                rx_index = 0;
+            }
+            else if (ch == '\r') // avoid double prompt for \r\n
+            {
+                UART_Printf("\r\n");
+            }
+            rx_index = 0; // Always clear on Enter
+            UART_Printf("> ");
+        }
+        else if (ch == '\b' || ch == 127) // Backspace
+        {
+            if (rx_index > 0)
+            {
+                rx_index--;
+                UART_Printf("\b \b");
             }
         }
-        else
+        else if (rx_index < sizeof(rx_cmd) - 1)
         {
-            if (rx_index < sizeof(rx_cmd) - 1)
-            {
-                rx_cmd[rx_index++] = (char)ch;
-            }
-            else
-            {
-                rx_index = 0;
-            }
-
-            // Cho phép lệnh 1 ký tự chạy ngay: x, z
-            if (rx_index == 1)
-            {
-                if (rx_cmd[0] == 'x' || rx_cmd[0] == 'X' ||
-                    rx_cmd[0] == 'z' || rx_cmd[0] == 'Z')
-                {
-                    rx_cmd[rx_index] = '\0';
-                    UART_Printf("CMD: %s\r\n", rx_cmd);
-                    Process_Command(rx_cmd);
-                    rx_index = 0;
-                }
-            }
-
-            // Cho phép lệnh 2 ký tự chạy ngay: t1, n1, s1, m1...
-            if (rx_index == 2)
-            {
-                char c0 = (char)tolower((unsigned char)rx_cmd[0]);
-                char c1 = rx_cmd[1];
-
-                if ((c0 == 't' || c0 == 'n' || c0 == 's' || c0 == 'm'|| c0 == 'c') &&
-                    (c1 >= '0' && c1 <= '9'))
-                {
-                    rx_cmd[rx_index] = '\0';
-                    UART_Printf("CMD: %s\r\n", rx_cmd);
-                    Process_Command(rx_cmd);
-                    rx_index = 0;
-                }
-            }
+            rx_cmd[rx_index++] = (char)ch;
+            UART_PutChar(ch);
         }
     }
 }
@@ -324,6 +471,8 @@ void UART_Printf(const char *fmt, ...)
             len = sizeof(buffer) - 1;
         }
 
-        HAL_UART_Transmit(&huart2, (uint8_t *)buffer, len, 100);
+        for (int i = 0; i < len; i++) {
+            UART_PutChar(buffer[i]);
+        }
     }
 }

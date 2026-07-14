@@ -33,8 +33,8 @@ void ForwardKinematics_Space(const float32_t *M, const float32_t *Slist, const f
         // 1. Calculate the twist for the current joint: twist = S * theta
         for (uint8_t j = 0; j < 6; j++)
         {
-            // Assuming Slist is stored as a flat array of size (6 * num_joints)
-            twist[j] = Slist[i * 6 + j] * thetalist[i];
+            // Slist is stored as a row-major 6 x num_joints matrix
+            twist[j] = Slist[j * num_joints + i] * thetalist[i];
         }
 
         // 2. Convert twist to se(3) matrix
@@ -85,11 +85,9 @@ void Compute_Twist_Error(const float32_t Td[16], const float32_t T_EE[16], float
 }
 
 void jacobianSpace(const float32_t *Slist, const float32_t *thetalist, uint8_t num_joints, float32_t *Js) {
-    // 1. Initialize Js = S (reshape array of vectors to 6 x num_joints CMSIS matrix)
-    for (uint8_t i = 0; i < num_joints; i++) {
-        for (uint8_t j = 0; j < 6; j++) {
-            Js[j * num_joints + i] = Slist[i * 6 + j];
-        }
+    // 1. Initialize Js = S (Slist is already a row-major 6 x num_joints matrix)
+    for (uint8_t k = 0; k < 6 * num_joints; k++) {
+        Js[k] = Slist[k];
     }
 
     // 2. Initialize T = eye(4)
@@ -112,7 +110,7 @@ void jacobianSpace(const float32_t *Slist, const float32_t *thetalist, uint8_t n
         // twist = S(:, i-1) * theta(i-1)
         float32_t twist[6];
         for (uint8_t j = 0; j < 6; j++) {
-            twist[j] = Slist[(i - 1) * 6 + j] * thetalist[i - 1];
+            twist[j] = Slist[j * num_joints + (i - 1)] * thetalist[i - 1];
         }
 
         // vector_To_se3
@@ -135,7 +133,7 @@ void jacobianSpace(const float32_t *Slist, const float32_t *thetalist, uint8_t n
         float32_t Si[6];
         float32_t Jsi[6];
 
-        for (uint8_t j = 0; j < 6; j++) Si[j] = Slist[i * 6 + j];
+        for (uint8_t j = 0; j < 6; j++) Si[j] = Slist[j * num_joints + i];
 
         arm_mat_init_f32(&mat_AdT, 6, 6, AdT);
         arm_mat_init_f32(&mat_Si, 6, 1, Si);
