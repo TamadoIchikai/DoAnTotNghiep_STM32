@@ -16,7 +16,13 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include "PoE_Kinematics.h"
+#include "Custom_CLI.h"
+#include "Custom_utils.h"
+#include "HW_Motors.h"
+#include "HW_Encoders.h"
+#include "HW_LimitSwitches.h"
 #include "Robot_Control.h"
+#include "Controllers.h"
 
 uint8_t e_stop_active = 0;
 char rx_cmd[32];
@@ -101,11 +107,33 @@ void Print_Status(void)
     float ang4 = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
     float dist4 = Angle_To_Distance(ang4, M4_Pulley_Linear_Dia, UNIT_DEG);
 
+    static int32_t prev_enc1 = 0, prev_enc2 = 0, prev_enc3 = 0, prev_enc4 = 0;
+    static uint32_t prev_time = 0;
+    uint32_t current_time = HAL_GetTick();
+    float delta_t = (current_time - prev_time) / 1000.0f;
+    if (delta_t <= 0.0f) delta_t = 0.001f;
+
+    float vel1 = Encoder_To_Velocity(enc1_pos, prev_enc1, delta_t, ENCODER_PPR, UNIT_DEG);
+    float vel2 = Encoder_To_Velocity(enc2_pos, prev_enc2, delta_t, ENCODER_PPR, UNIT_DEG);
+    float vel3 = Encoder_To_Velocity(enc3_pos, prev_enc3, delta_t, 11, UNIT_DEG);
+    float vel4_deg = Encoder_To_Velocity(enc4_pos, prev_enc4, delta_t, ENCODER_PPR, UNIT_DEG);
+    float vel4_mm_s = Angle_To_Distance(vel4_deg, M4_Pulley_Linear_Dia, UNIT_DEG);
+
+    prev_enc1 = enc1_pos;
+    prev_enc2 = enc2_pos;
+    prev_enc3 = enc3_pos;
+    prev_enc4 = enc4_pos;
+    prev_time = current_time;
+
     UART_PutString("ANG1="); UART_PutFloatFast(ang1);
     UART_PutString(" | ANG2="); UART_PutFloatFast(ang2);
     UART_PutString(" | ANG3="); UART_PutFloatFast(ang3);
-    UART_PutString(" | ANG4="); UART_PutFloatFast(ang4);
-    UART_PutString(" (DIST="); UART_PutFloatFast(dist4); UART_PutString("mm)\r\n");
+    UART_PutString(" | DIST4="); UART_PutFloatFast(dist4); UART_PutString("mm\r\n");
+
+    UART_PutString("VEL1="); UART_PutFloatFast(vel1);
+    UART_PutString(" | VEL2="); UART_PutFloatFast(vel2);
+    UART_PutString(" | VEL3="); UART_PutFloatFast(vel3);
+    UART_PutString(" | VEL4="); UART_PutFloatFast(vel4_mm_s); UART_PutString("mm/s\r\n");
 
     UART_PutString("LIM=");
     UART_PutInt(Limit1_IsTriggered());
@@ -212,21 +240,128 @@ void Process_Command(char *cmd)
 
     if (strcmp(cmd, "fk") == 0)
     {
+        extern float32_t robot_Init_Pose[4];
+        extern float32_t M_home_matlab[16];
+
         float32_t thetalist[4];
-        thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD);
-        thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD);
-        thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD);
-        float32_t m4_deg = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
-        thetalist[3] = Angle_To_Distance(m4_deg, M4_Pulley_Linear_Dia, UNIT_DEG) / 1000.0f;
+        thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[0];
+        thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[1];
+        thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[2];
+        float32_t m4_rad = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_RAD);
+        thetalist[3] = (Angle_To_Distance(m4_rad, M4_Pulley_Linear_Dia, UNIT_RAD) / 1000.0f) + robot_Init_Pose[3];
 
         float32_t T_EE[16];
-        ForwardKinematics_Space(M_home, S, thetalist, 4, T_EE);
+        ForwardKinematics_Space(M_home_matlab, S, thetalist, 4, T_EE);
 
         UART_Printf("Forward Kinematics T_EE (4x4):\r\n");
         for (int i = 0; i < 4; i++) {
             UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n", 
                 T_EE[i*4], T_EE[i*4+1], T_EE[i*4+2], T_EE[i*4+3]);
         }
+        return;
+    }
+
+    if (strncmp(cmd, "transfer_m", 10) == 0)
+    {
+        int motor_id = 0;
+        uint32_t freq = 0;
+        char dir_char = 0;
+        float target_deg = 0.0f;
+        
+        if (sscanf(cmd, "transfer_m%d_%lu_%c%f", &motor_id, &freq, &dir_char, &target_deg) == 4) {
+            Transfer_Test_Start((uint8_t)motor_id, freq, dir_char, target_deg);
+        } else {
+            UART_Printf("Invalid transfer command. Format: transfer_m[id]_[freq]_[t/n][deg]\r\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "ik_run") == 0)
+    {
+        UART_Printf("IK Target T_d (4x4):\r\n");
+        for (int i = 0; i < 4; i++) {
+            UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n",
+                T_d[i*4], T_d[i*4+1], T_d[i*4+2], T_d[i*4+3]);
+        }
+        Robot_Set_IK_Target(T_d);
+        UART_Printf("IK active. Moving to target (Open-loop)...\r\n");
+        return;
+    }
+    
+    if (strcmp(cmd, "ik_run_con_1") == 0)
+    {
+        UART_Printf("IK Target T_d (4x4):\r\n");
+        for (int i = 0; i < 4; i++) {
+            UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n",
+                T_d[i*4], T_d[i*4+1], T_d[i*4+2], T_d[i*4+3]);
+        }
+        Robot_Set_IK_Target_PD(T_d, 1);
+        UART_Printf("IK active. Moving using Multi-PD param set 1...\r\n");
+        return;
+    }
+
+    if (strcmp(cmd, "ik_run_con_2") == 0)
+    {
+        UART_Printf("IK Target T_d (4x4):\r\n");
+        for (int i = 0; i < 4; i++) {
+            UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n",
+                T_d[i*4], T_d[i*4+1], T_d[i*4+2], T_d[i*4+3]);
+        }
+        Robot_Set_IK_Target_PD(T_d, 2);
+        UART_Printf("IK active. Moving using Multi-PD param set 2...\r\n");
+        return;
+    }
+
+    if (strcmp(cmd, "ik_mulrun") == 0)
+    {
+        UART_Printf("Starting Multi-IK Sequence (T_d -> T_d4)...\r\n");
+        Robot_Start_Multi_IK();
+        return;
+    }
+
+    if (strncmp(cmd, "pid_run_m", 9) == 0 && strlen(cmd) >= 13)
+    {
+        uint8_t motor_id = cmd[9] - '0';
+        char dir_char = cmd[11]; // e.g. 't' or 'n'
+        uint8_t param_idx = cmd[12] - '0';
+        
+        if (motor_id < 1 || motor_id > 4 || (dir_char != 't' && dir_char != 'n') || (param_idx < 1 || param_idx > 2)) {
+            UART_Printf("Invalid pid_run syntax. Use pid_run_m[1-4]_[t/n][1/2]\r\n");
+            return;
+        }
+
+        extern float32_t kpd_M1_1[2], kpd_M1_2[2];
+        extern float32_t kpd_M2_1[2], kpd_M2_2[2];
+        extern float32_t kpd_M3_1[2], kpd_M3_2[2];
+        extern float32_t kpd_M4_1[2], kpd_M4_2[2];
+        
+        float Kp = 0.0f, Kd = 0.0f;
+        float32_t *kpd = NULL;
+
+        if (motor_id == 1) kpd = (param_idx == 1) ? kpd_M1_1 : kpd_M1_2;
+        else if (motor_id == 2) kpd = (param_idx == 1) ? kpd_M2_1 : kpd_M2_2;
+        else if (motor_id == 3) kpd = (param_idx == 1) ? kpd_M3_1 : kpd_M3_2;
+        else if (motor_id == 4) kpd = (param_idx == 1) ? kpd_M4_1 : kpd_M4_2;
+
+        if (kpd) {
+            Kp = kpd[0];
+            Kd = kpd[1];
+        }
+
+        uint8_t forward = (dir_char == 't') ? 1 : 0;
+        
+        int32_t enc_pos_val = 0;
+        if (motor_id == 1) enc_pos_val = enc1_pos;
+        else if (motor_id == 2) enc_pos_val = enc2_pos;
+        else if (motor_id == 3) enc_pos_val = enc3_pos;
+        else if (motor_id == 4) enc_pos_val = enc4_pos;
+
+        float start_deg = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG);
+        float target_deg = start_deg + (forward ? 90.0f : -90.0f);
+        
+        UART_Printf("Testing M%d PD to %.2f deg with Kp=%.2f Kd=%.2f\r\n", motor_id, target_deg, Kp, Kd);
+        
+        PD_Test_Start(motor_id, target_deg, Kp, Kd);
         return;
     }
 

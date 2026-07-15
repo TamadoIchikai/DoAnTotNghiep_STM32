@@ -41,6 +41,7 @@
 #include "PoE_lieTheory.h"
 #include "PoE_helper.h"
 #include "PoE_Kinematics.h"
+#include "Controllers.h"
 
 /* USER CODE END Includes */
 
@@ -136,28 +137,32 @@ uint8_t g_dc_running = 0;
 uint8_t g_dc_forward = 1;
 uint8_t g_magnet_on = 0;
 
+float g_vel_filter_alpha = 0.2f;
+
 // Re-add the encoder definitions that were removed
 volatile int32_t enc1_pos = 0;
 volatile int32_t enc2_pos = 0;
 volatile int32_t enc3_pos = 0;
 volatile int32_t enc4_pos = 0;
 
-float32_t robot_Init_Angle[4] = {-15.0f,38.0f,0.0f,-10.0f};
 
-#define L1 0.2304f
-#define L2 0.1347f
+#define L1 0.23f
+#define L2 0.12f
 #define D1 0.230f
 #define D2 0.049f
 #define D3 0.210f
-#define D4 0.097f
-#define D_EE 0.350f
+#define D_EE 0.389f
 
 float32_t M1_Lim_Deg = 180.0f;
 float32_t M2_Lim_Deg = 200.0f;
+float32_t M3_Lim_Deg = 150.0f;
 float32_t M4_Lim_mm  = 85.0f;
 float32_t M4_Pulley_Linear_Dia = 13.0f;
 
-float32_t M_home[16] = {01.0f, 0.0f, 0.0f, L1+L2,
+float32_t robot_Init_Angle[4] = {-15.0f,38.0f,0.0f,-10.0f};
+float32_t robot_Init_Pose[4] = {PI/2, -PI/2, 0, 0};
+
+float32_t M_home_matlab[16] = {01.0f, 0.0f, 0.0f, L1+L2,
 					     	   	0.0f, 1.0f, 0.0f, 0.0f,
 					    		0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
 					    		0.0f, 0.0f, 0.0f, 1.0f};
@@ -170,6 +175,39 @@ float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
 							0.0f, -L1, -(L1+L2), 0.0f,
 							0.0f, 0.0f, 0.0f, -1.0f};
 
+// IK test target: straight arm along X axis
+float32_t T_d[16] = {1.0f, 0.0f, 0.0f, L1+L2,
+                     0.0f, 1.0f, 0.0f, 0.0f,
+                     0.0f, 0.0f, 1.0f, 0.05f,
+                     0.0f, 0.0f, 0.0f, 1.0f};
+
+// IK test target: straight arm along X axis
+float32_t T_d2[16] = {1.0f, 0.0f, 0.0f, 0.268f,
+                     0.0f, 1.0f, 0.0f, 0.064f,
+                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+                     0.0f, 0.0f, 0.0f, 1.0f};
+
+// IK test target: straight arm along X axis
+float32_t T_d3[16] = {1.0f, 0.0f, 0.0f, 0.268f,
+                     0.0f, 1.0f, 0.0f, -0.064f,
+                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+                     0.0f, 0.0f, 0.0f, 1.0f};
+
+// IK test target: straight arm along X axis
+float32_t T_d4[16] = {1.0f, 0.0f, 0.0f, 0.204f,
+                     0.0f, 1.0f, 0.0f, 0.0f,
+                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+                     0.0f, 0.0f, 0.0f, 1.0f};
+
+
+float32_t kpd_M1_1[2] = {10.0f, 0.0f};
+float32_t kpd_M1_2[2] = {20.0f, 0.0f};
+float32_t kpd_M2_1[2] = {20.0f, 0.0f};
+float32_t kpd_M2_2[2] = {30.0f, 0.0f};
+float32_t kpd_M3_1[2] = {1.0f, 0.0f};
+float32_t kpd_M3_2[2] = {1.0f, 0.0f};
+float32_t kpd_M4_1[2] = {1.0f, 0.0f};
+float32_t kpd_M4_2[2] = {1.0f, 0.0f};
 
 /* USER CODE END PV */
 
@@ -258,7 +296,7 @@ void PoETest(void)
         0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 2.0f   // S3
     };
 
-    float32_t thetalist[3] = {M_PI / 2.0f, M_PI / 4.0f, -M_PI / 4.0f};
+    float32_t thetalist[3] = {PI / 2.0f, M_PI / 4.0f, -M_PI / 4.0f};
     float32_t T_fk_out[16];
 
     ForwardKinematics_Space(M_fk, Slist, thetalist, 3, T_fk_out);
@@ -355,6 +393,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
   while (1)
     {
       /* USER CODE END WHILE */
@@ -364,7 +403,12 @@ int main(void)
 
           Limit_Safety_Service();
           Software_Limit_Service();
+          Encoder_Stall_Service();
           Robot_Joint_Task_Service();
+          Robot_Multi_IK_Service();
+          PD_Test_Service();
+          Multi_PD_Service();
+          Transfer_Test_Service();
 
           UART_TX_Service();
 
@@ -372,15 +416,12 @@ int main(void)
 
           if ((HAL_GetTick() - lastStatus) >= 500)
           {
-              Print_Status();
+              if (!Is_Logging_Active()) {
+                  Print_Status();
+              }
               lastStatus = HAL_GetTick();
           }
       /* USER CODE BEGIN 3 */
-//          static uint32_t lastIK = 0;
-//          if (HAL_GetTick() - lastIK >= 20) {
-//              Robot_IK_Task_20ms();
-//              lastIK = HAL_GetTick();
-//          }
     }
   /* USER CODE END 3 */
 }
@@ -593,7 +634,7 @@ static void MX_TIM12_Init(void)
   htim12.Instance = TIM12;
   htim12.Init.Prescaler = 8;
   htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim12.Init.Period = 999;
+  htim12.Init.Period = 255;
   htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim12.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim12) != HAL_OK)

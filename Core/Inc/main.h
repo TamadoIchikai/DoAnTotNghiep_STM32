@@ -37,10 +37,12 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 #include "arm_math.h"
-extern float32_t M_home[16];
+extern float32_t M_home_matlab[16];
 extern float32_t S[24];
+extern float32_t T_d[16];
 extern float32_t M4_Pulley_Linear_Dia;
 extern float32_t robot_Init_Angle[4];
+extern float g_vel_filter_alpha;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -65,8 +67,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
-#ifndef M_PI
-#define M_PI 3.14159f
+#ifndef PI
+#define PI 3.14159f
 #endif
 
 #define STEP_HIGH_US              8
@@ -75,7 +77,7 @@ void Error_Handler(void);
 #define ACCEL_STEP_US             8
 
 #define DC_PWM_MAX                999
-#define DEFAULT_DC_PWM            700
+#define DEFAULT_DC_PWM            125
 
 #define AUTO_STATUS_ENABLE        1
 #define STATUS_PERIOD_MS          700

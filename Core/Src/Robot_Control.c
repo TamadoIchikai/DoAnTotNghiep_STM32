@@ -53,17 +53,221 @@ void Home_Stepper_Motor(Stepper_t *motor, uint8_t motor_id, uint8_t search_forwa
     HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
 }
 
-static uint8_t ik_active = 0;
-static float32_t T_ik_target[16];
-
 void Robot_Set_IK_Target(const float32_t T_d[16]) {
-    memcpy(T_ik_target, T_d, sizeof(float32_t) * 16);
-    ik_active = 1;
+    UART_Printf("Solving Inverse Kinematics...\r\n");
+    
+    // Safeguard 1: Input Bounds (Reachability)
+    float32_t req_r = sqrtf(T_d[3]*T_d[3] + T_d[7]*T_d[7]);
+    if (req_r > 0.3501f) {
+        UART_Printf("[!] IK Input out of reach (XY: %.2f > 0.35m)\r\n", req_r);
+        return;
+    }
+
+
+    extern float32_t robot_Init_Pose[4];
+    extern float32_t M_home_matlab[16];
+    extern float32_t M1_Lim_Deg, M2_Lim_Deg, M3_Lim_Deg, M4_Lim_mm;
+
+    float32_t T_EE[16];
+    float32_t V_EE[6];
+    float32_t Js[24];
+    float32_t Js_Inverse[24];
+    float32_t d_theta[4];
+    
+    arm_matrix_instance_f32 mat_Jinv, mat_V, mat_dtheta;
+    arm_mat_init_f32(&mat_Jinv, 4, 6, Js_Inverse);
+    arm_mat_init_f32(&mat_V, 6, 1, V_EE);
+    arm_mat_init_f32(&mat_dtheta, 4, 1, d_theta);
+
+    uint8_t solution_found = 0;
+    float32_t target_abs_deg[4] = {0};
+
+    // Try up to 2 attempts (Attempt 0: current elbow, Attempt 1: flipped elbow)
+    for (int attempt = 0; attempt < 2; attempt++) {
+        // 1. Get current absolute joint angles as initial guess
+        float32_t thetalist[4];
+        thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[0];
+        thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[1];
+        thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[2];
+        float32_t m4_rad = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_RAD);
+        thetalist[3] = (Angle_To_Distance(m4_rad, M4_Pulley_Linear_Dia, UNIT_RAD) / 1000.0f) + robot_Init_Pose[3];
+
+        if (attempt == 1) {
+            // Flip the elbow guess for the second attempt to find the alternate IK solution
+            thetalist[1] = -thetalist[1];
+        }
+
+        uint8_t converged = 0;
+        // Max 100 iterations for Newton-Raphson
+        for (int iter = 0; iter < 100; iter++) {
+            ForwardKinematics_Space(M_home_matlab, S, thetalist, 4, T_EE);
+            Compute_Twist_Error(T_d, T_EE, V_EE);
+
+            float32_t err_norm = 0;
+            for (int i = 0; i < 6; i++) err_norm += V_EE[i] * V_EE[i];
+            
+            if (err_norm < 1e-6f) {
+                converged = 1;
+                break;
+            }
+
+            jacobianSpace(S, thetalist, 4, Js);
+            DLS(Js, 4, Js_Inverse);
+            arm_mat_mult_f32(&mat_Jinv, &mat_V, &mat_dtheta);
+
+            for (int i = 0; i < 4; i++) {
+                thetalist[i] += d_theta[i];
+            }
+        }
+
+        if (converged) {
+            // Convert thetalist (absolute state) back to physical angles from physical zero (in degrees)
+            float32_t deg1 = (thetalist[0] - robot_Init_Pose[0]) * 180.0f / PI;
+            float32_t deg2 = (thetalist[1] - robot_Init_Pose[1]) * 180.0f / PI;
+            float32_t deg3 = (thetalist[2] - robot_Init_Pose[2]) * 180.0f / PI;
+            
+            // For M4, thetalist[3] is absolute translation in meters
+            float32_t dist_m = thetalist[3] - robot_Init_Pose[3];
+            float32_t dist_mm = dist_m * 1000.0f;
+
+            // Safeguard 2: Output Joint Limits
+            if (fabsf(deg1) <= M1_Lim_Deg &&
+                fabsf(deg2) <= M2_Lim_Deg &&
+                fabsf(deg3) <= M3_Lim_Deg &&
+                fabsf(dist_mm) <= M4_Lim_mm) 
+            {
+                // Solution is valid and within physical limits
+                target_abs_deg[0] = deg1;
+                target_abs_deg[1] = deg2;
+                target_abs_deg[2] = deg3;
+                target_abs_deg[3] = (dist_mm / (M4_Pulley_Linear_Dia / 2.0f)) * 180.0f / PI;
+                solution_found = 1;
+                UART_Printf("IK Converged! Dispatching joints.\r\n");
+                break; 
+            } else {
+                UART_Printf("[!] IK Solution %d exceeds joint limits.\r\n", attempt);
+            }
+        }
+    }
+
+    if (!solution_found) {
+        UART_Printf("[!] IK Solver failed to find a valid reachable solution.\r\n");
+        return;
+    }
+
+    // Dispatch to Joint Move Service
+    for (int i = 1; i <= 4; i++) {
+        float32_t current_angle = 0;
+        if (i == 1) current_angle = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_DEG);
+        else if (i == 2) current_angle = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_DEG);
+        else if (i == 3) current_angle = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
+        else if (i == 4) current_angle = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
+
+        float32_t relative_disp = target_abs_deg[i-1] - current_angle;
+        if (fabsf(relative_disp) > 0.05f) { // Only move if significant
+            uint8_t dir = (relative_disp > 0) ? 1 : 0;
+            Robot_Set_Joint_Target(i, dir, fabsf(relative_disp));
+        }
+    }
 }
 
-void Robot_IK_Stop(void) {
-    ik_active = 0;
+void Robot_Set_IK_Target_PD(const float32_t T_d[16], uint8_t param_idx) {
+    UART_Printf("Solving Inverse Kinematics for Multi-PD...\r\n");
+    
+    // Safeguard 1: Input Bounds (Reachability)
+    float32_t req_r = sqrtf(T_d[3]*T_d[3] + T_d[7]*T_d[7]);
+    if (req_r > 0.3501f) {
+        UART_Printf("[!] IK Input out of reach (XY: %.2f > 0.35m)\r\n", req_r);
+        return;
+    }
+
+    extern float32_t robot_Init_Pose[4];
+    extern float32_t M_home_matlab[16];
+    extern float32_t M1_Lim_Deg, M2_Lim_Deg, M3_Lim_Deg, M4_Lim_mm;
+    extern float32_t S[24];
+
+    float32_t T_EE[16];
+    float32_t V_EE[6];
+    float32_t Js[24];
+    float32_t Js_Inverse[24];
+    float32_t d_theta[4];
+    
+    arm_matrix_instance_f32 mat_Jinv, mat_V, mat_dtheta;
+    arm_mat_init_f32(&mat_Jinv, 4, 6, Js_Inverse);
+    arm_mat_init_f32(&mat_V, 6, 1, V_EE);
+    arm_mat_init_f32(&mat_dtheta, 4, 1, d_theta);
+
+    uint8_t solution_found = 0;
+    float32_t target_abs_deg[4] = {0};
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        float32_t thetalist[4];
+        thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[0];
+        thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[1];
+        thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[2];
+        float32_t m4_rad = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_RAD);
+        extern float32_t M4_Pulley_Linear_Dia;
+        thetalist[3] = (Angle_To_Distance(m4_rad, M4_Pulley_Linear_Dia, UNIT_RAD) / 1000.0f) + robot_Init_Pose[3];
+
+        if (attempt == 1) {
+            thetalist[1] = -thetalist[1]; // Try alternate elbow solution
+        }
+
+        uint8_t converged = 0;
+        for (int iter = 0; iter < 100; iter++) {
+            ForwardKinematics_Space(M_home_matlab, S, thetalist, 4, T_EE);
+            Compute_Twist_Error(T_d, T_EE, V_EE);
+
+            float32_t err_norm = 0;
+            for (int i = 0; i < 6; i++) err_norm += V_EE[i] * V_EE[i];
+            
+            if (err_norm < 1e-6f) {
+                converged = 1;
+                break;
+            }
+
+            jacobianSpace(S, thetalist, 4, Js);
+            DLS(Js, 4, Js_Inverse);
+            arm_mat_mult_f32(&mat_Jinv, &mat_V, &mat_dtheta);
+
+            for (int i = 0; i < 4; i++) {
+                thetalist[i] += d_theta[i];
+            }
+        }
+
+        if (converged) {
+            float32_t deg1 = (thetalist[0] - robot_Init_Pose[0]) * 180.0f / PI;
+            float32_t deg2 = (thetalist[1] - robot_Init_Pose[1]) * 180.0f / PI;
+            float32_t deg3 = (thetalist[2] - robot_Init_Pose[2]) * 180.0f / PI;
+            float32_t dist_m = thetalist[3] - robot_Init_Pose[3];
+            float32_t dist_mm = dist_m * 1000.0f;
+
+            if (fabsf(deg1) <= M1_Lim_Deg && fabsf(deg2) <= M2_Lim_Deg &&
+                fabsf(deg3) <= M3_Lim_Deg && fabsf(dist_mm) <= M4_Lim_mm) 
+            {
+                target_abs_deg[0] = deg1;
+                target_abs_deg[1] = deg2;
+                target_abs_deg[2] = deg3;
+                target_abs_deg[3] = (dist_mm / (M4_Pulley_Linear_Dia / 2.0f)) * 180.0f / PI;
+                solution_found = 1;
+                UART_Printf("IK Converged! Dispatching to Multi-PD Controller.\r\n");
+                break; 
+            }
+        }
+    }
+
+    if (!solution_found) {
+        UART_Printf("[!] IK Solver failed to find a valid reachable solution.\r\n");
+        return;
+    }
+
+    // Call the newly created Multi_PD_Start function
+    extern void Multi_PD_Start(float32_t target_abs_deg[4], uint8_t param_idx);
+    Multi_PD_Start(target_abs_deg, param_idx);
 }
+
+
+
 
 typedef struct {
     uint8_t active;
@@ -74,6 +278,14 @@ typedef struct {
 } JointMove_t;
 
 static JointMove_t joint_moves[5] = {0};
+
+void Robot_IK_Stop(void) {
+    for(int i = 1; i <= 4; i++) joint_moves[i].active = 0;
+    Stepper_Stop(&motor1);
+    Stepper_Stop(&motor2);
+    Stepper_Stop(&motor4);
+    DC_Stop();
+}
 
 void Robot_Set_Joint_Target(uint8_t motor_id, uint8_t dir, float32_t target_deg) {
     if (motor_id < 1 || motor_id > 4) return;
@@ -96,7 +308,8 @@ void Robot_Set_Joint_Target(uint8_t motor_id, uint8_t dir, float32_t target_deg)
 
     if (motor_id == 1) Stepper_Start(&motor1, 1, dir);
     else if (motor_id == 2) Stepper_Start(&motor2, 2, dir);
-    else if (motor_id == 4) Stepper_Start(&motor4, 3, dir);
+    else if (motor_id == 3) DC_Start(dir);
+    else if (motor_id == 4) Stepper_Start(&motor4, 4, dir);
 }
 
 void Robot_Joint_Task_Service(void) {
@@ -127,109 +340,51 @@ void Robot_Joint_Task_Service(void) {
             joint_moves[i].active = 0;
             if (i == 1) Stepper_Stop(&motor1);
             else if (i == 2) Stepper_Stop(&motor2);
+            else if (i == 3) DC_Stop();
             else if (i == 4) Stepper_Stop(&motor4);
             UART_Printf("\r\n[!] Motor %d reached target %.2f deg\r\n> ", i, joint_moves[i].target_angle);
         }
     }
 }
 
-void Robot_IK_Task_20ms(void) {
-    if (e_stop_active) {
-        ik_active = 0;
-        return;
+// MULTI-IK Logic
+static uint8_t multi_ik_active = 0;
+static uint8_t multi_ik_step = 0;
+static const float32_t* multi_ik_targets[4];
+
+uint8_t Robot_Is_Moving(void) {
+    for (int i=1; i<=4; i++) {
+        if (joint_moves[i].active) return 1;
     }
-    if (!ik_active) return;
-    
-    // 1. Get current joint angles
-    float32_t thetalist[4];
-    thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD);
-    thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD);
-    thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD);
-    float32_t m4_deg = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
-    thetalist[3] = Angle_To_Distance(m4_deg, M4_Pulley_Linear_Dia, UNIT_DEG) / 1000.0f; // in meters
+    return 0;
+}
 
-    // 2. Forward Kinematics
-    float32_t T_EE[16];
-    ForwardKinematics_Space(M_home, S, thetalist, 4, T_EE);
+void Robot_Multi_IK_Service(void) {
+    if (!multi_ik_active) return;
+    if (e_stop_active) { multi_ik_active = 0; return; }
 
-    // 3. Twist Error
-    float32_t V_EE[6];
-    Compute_Twist_Error(T_ik_target, T_EE, V_EE);
-
-    float32_t err_norm = 0;
-    for (int i = 0; i < 6; i++) err_norm += V_EE[i] * V_EE[i];
-    
-    // Stop condition
-    if (err_norm < 1e-6f) {
-        ik_active = 0;
-        Stepper_Stop(&motor1);
-        Stepper_Stop(&motor2);
-        Stepper_Stop(&motor4);
-        DC_Stop();
-        UART_Printf("IK Reached Target.\r\n");
-        return;
+    if (!Robot_Is_Moving()) {
+        // Current move is done, dispatch next
+        if (multi_ik_step >= 4) {
+            multi_ik_active = 0;
+            UART_Printf("[Multi-IK] Sequence complete!\r\n> ");
+            return;
+        }
+        
+        UART_Printf("\r\n[Multi-IK] Moving to point %d/4...\r\n", multi_ik_step + 1);
+        Robot_Set_IK_Target(multi_ik_targets[multi_ik_step]);
+        multi_ik_step++;
     }
+}
 
-    // 4. Jacobian
-    float32_t Js[24]; // 6x4
-    jacobianSpace(S, thetalist, 4, Js);
-
-    // 5. Inverse Jacobian (DLS)
-    float32_t Js_Inverse[24]; // 4x6
-    DLS(Js, 4, Js_Inverse);
-
-    // 6. Compute delta theta
-    float32_t d_theta[4] = {0};
-    arm_matrix_instance_f32 mat_Jinv, mat_V, mat_dtheta;
-    arm_mat_init_f32(&mat_Jinv, 4, 6, Js_Inverse);
-    arm_mat_init_f32(&mat_V, 6, 1, V_EE);
-    arm_mat_init_f32(&mat_dtheta, 4, 1, d_theta);
-    arm_mat_mult_f32(&mat_Jinv, &mat_V, &mat_dtheta);
-
-    // 7. Apply to motors (Simple P control mapping velocity to stepper interval)
-    // Motor 1
-    if (fabsf(d_theta[0]) > 0.005f) {
-        uint8_t dir = (d_theta[0] > 0) ? 1 : 0;
-        uint32_t interval = (uint32_t)(50000.0f / fabsf(d_theta[0])); 
-        if (interval < 200) interval = 200;
-        if (interval > 5000) { Stepper_Stop(&motor1); }
-        else {
-            Stepper_Start(&motor1, 1, dir);
-            motor1.targetIntervalUs = interval;
-        }
-    } else { Stepper_Stop(&motor1); }
-
-    // Motor 2
-    if (fabsf(d_theta[1]) > 0.005f) {
-        uint8_t dir = (d_theta[1] > 0) ? 1 : 0;
-        uint32_t interval = (uint32_t)(50000.0f / fabsf(d_theta[1])); 
-        if (interval < 200) interval = 200;
-        if (interval > 5000) { Stepper_Stop(&motor2); }
-        else {
-            Stepper_Start(&motor2, 2, dir);
-            motor2.targetIntervalUs = interval;
-        }
-    } else { Stepper_Stop(&motor2); }
-
-    // Motor 3 (DC Motor)
-    if (fabsf(d_theta[2]) > 0.005f) {
-        uint8_t dir = (d_theta[2] > 0) ? 1 : 0;
-        if (!g_dc_running || g_dc_forward != dir) {
-            DC_Start(dir);
-        }
-    } else { DC_Stop(); }
-
-    // Motor 4 (Prismatic - d_theta[3] is in meters)
-    if (fabsf(d_theta[3]) > 0.0005f) {
-        uint8_t dir = (d_theta[3] > 0) ? 1 : 0; 
-        uint32_t interval = (uint32_t)(1.0f / fabsf(d_theta[3])); 
-        if (interval < 200) interval = 200;
-        if (interval > 5000) { Stepper_Stop(&motor4); }
-        else {
-            Stepper_Start(&motor4, 4, dir);
-            motor4.targetIntervalUs = interval;
-        }
-    } else { Stepper_Stop(&motor4); }
+void Robot_Start_Multi_IK(void) {
+    extern float32_t T_d[16], T_d2[16], T_d3[16], T_d4[16];
+    multi_ik_targets[0] = T_d;
+    multi_ik_targets[1] = T_d2;
+    multi_ik_targets[2] = T_d3;
+    multi_ik_targets[3] = T_d4;
+    multi_ik_step = 0;
+    multi_ik_active = 1;
 }
 
 // Main parallel initialization routine using encoder feedback for offset tracking

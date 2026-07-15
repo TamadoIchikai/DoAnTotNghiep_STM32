@@ -14,22 +14,23 @@
 #include <stdio.h>
 void DC_Stop(void)
 {
+    if (g_dc_running) {
+        UART_Printf("M3 DC STOP\r\n");
+    }
     g_dc_running = 0;
 
     HAL_GPIO_WritePin(DC_AIN1_PORT, DC_AIN1_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(DC_AIN2_PORT, DC_AIN2_PIN, GPIO_PIN_RESET);
 
     __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, 0);
-
-    UART_Printf("M4 DC STOP\r\n");
 }
 
 void DC_Start(uint8_t forward)
 {
 	#if STOP_ON_LIMIT
-		if (Limit4_IsTriggered())
+		if (Limit3_IsTriggered())
 		{
-			UART_Printf("Cannot start M4: LIMIT4 triggered\r\n");
+			UART_Printf("Cannot start M3: LIMIT3 triggered\r\n");
 			return;
 		}
 	#endif
@@ -50,9 +51,9 @@ void DC_Start(uint8_t forward)
 		HAL_GPIO_WritePin(DC_AIN2_PORT, DC_AIN2_PIN, GPIO_PIN_SET);
 	}
 
-	__HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, 700);
+	__HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, g_dc_pwm);
 
-	UART_Printf("M4 DC START %s PWM=%u\r\n",
+	UART_Printf("M3 DC START %s PWM=%u\r\n",
 				forward ? "FORWARD" : "REVERSE",
 				g_dc_pwm);
 }
@@ -85,13 +86,14 @@ void Stepper_SetDir(Stepper_t *m, uint8_t forward)
 
 void Stepper_Stop(Stepper_t *m)
 {
+    if (m->running) {
+        UART_Printf("%s STOP\r\n", m->name);
+    }
     m->running = 0;
     m->stepHigh = 0;
 
     HAL_GPIO_WritePin(m->stepPort, m->stepPin, GPIO_PIN_RESET);
     Stepper_Disable(m);
-
-    UART_Printf("%s STOP\r\n", m->name);
 }
 
 void Stepper_Start(Stepper_t *m, uint8_t motor_id, uint8_t forward)
