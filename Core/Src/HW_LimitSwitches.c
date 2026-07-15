@@ -65,7 +65,7 @@ void Limit_Safety_Service(void)
     // Motor 1: CCW limit (forward=1), reverses CW (forward=0)
     if (l1_curr) {
         if (m1_jammed) { /* Do nothing until released */ }
-        else if (!motor1.running || motor1.forward == 1) {
+        else if (motor1.running && motor1.forward == 1) {
             if (!l1_prev) UART_Printf("LIMIT1 triggered -> backing off M1\r\n");
             Stepper_Start(&motor1, 0, 0); // Reverse
             m1_opp_track = 1;
@@ -86,7 +86,7 @@ void Limit_Safety_Service(void)
     // Motor 2: CW limit (forward=0), reverses CCW (forward=1)
     if (l2_curr) {
         if (m2_jammed) { /* Do nothing */ }
-        else if (!motor2.running || motor2.forward == 0) {
+        else if (motor2.running && motor2.forward == 0) {
             if (!l2_prev) UART_Printf("LIMIT2 triggered -> backing off M2\r\n");
             Stepper_Start(&motor2, 0, 1);
             m2_opp_track = 1;
@@ -113,9 +113,9 @@ void Limit_Safety_Service(void)
     // Motor 4: CCW limit (forward=1), reverses CW (forward=0)
     if (l4_curr) {
         if (m4_jammed) { /* Do nothing */ }
-        else if (!motor4.running || motor4.forward == 1) {
+        else if (motor4.running && motor4.forward == 1) {
             if (!l4_prev) UART_Printf("LIMIT4 triggered -> backing off M4\r\n");
-            Stepper_Start(&motor4, 0, 0);
+            Stepper_Start(&motor4, 0, 0); // back off DOWN
             m4_opp_track = 1;
             m4_jam_start = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_DEG);
         } else if (motor4.running && motor4.forward == 0) {
@@ -165,6 +165,22 @@ void Software_Limit_Service(void)
     }
 
     // ---------------------------------------------------------
+    // MOTOR 3 (DC) SOFT LIMIT: 150 degrees in either direction
+    // ---------------------------------------------------------
+    extern float32_t M3_Lim_Deg;
+    float m3_angle = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_DEG);
+    if (g_dc_running) {
+        if (m3_angle >= M3_Lim_Deg && g_dc_forward == 1) {
+            UART_Printf("SOFT LIMIT: M3 exceeded +150 deg. Stopping DC.\r\n");
+            DC_Stop();
+        }
+        if (m3_angle <= -M3_Lim_Deg && g_dc_forward == 0) {
+            UART_Printf("SOFT LIMIT: M3 exceeded -150 deg. Stopping DC.\r\n");
+            DC_Stop();
+        }
+    }
+
+    // ---------------------------------------------------------
     // MOTOR 4 SOFT LIMIT: 95 mm (Linear Prismatic)
     // Homes CCW (forward = 1). Moves away from home CW (forward = 0).
     // ---------------------------------------------------------
@@ -180,4 +196,52 @@ void Software_Limit_Service(void)
         }
     }
 #endif
+}
+
+void Encoder_Stall_Service(void)
+{
+    static int32_t prev_enc1 = 0, prev_enc2 = 0, prev_enc3 = 0, prev_enc4 = 0;
+    static uint32_t stall_tick1 = 0, stall_tick2 = 0, stall_tick3 = 0, stall_tick4 = 0;
+    static uint8_t stall_printed1 = 0, stall_printed2 = 0, stall_printed3 = 0, stall_printed4 = 0;
+    uint32_t now = HAL_GetTick();
+
+    // Motor 1
+    if (motor1.running) {
+        if (enc1_pos != prev_enc1) {
+            prev_enc1 = enc1_pos; stall_tick1 = now; stall_printed1 = 0;
+        } else if ((now - stall_tick1) >= 500 && !stall_printed1) {
+            UART_Printf("[STALL] M1 encoder unchanged for 1s. Stopping.\r\n");
+            Stepper_Stop(&motor1); stall_printed1 = 1;
+        }
+    } else { prev_enc1 = enc1_pos; stall_tick1 = now; stall_printed1 = 0; }
+
+    // Motor 2
+    if (motor2.running) {
+        if (enc2_pos != prev_enc2) {
+            prev_enc2 = enc2_pos; stall_tick2 = now; stall_printed2 = 0;
+        } else if ((now - stall_tick2) >= 500 && !stall_printed2) {
+            UART_Printf("[STALL] M2 encoder unchanged for 1s. Stopping.\r\n");
+            Stepper_Stop(&motor2); stall_printed2 = 1;
+        }
+    } else { prev_enc2 = enc2_pos; stall_tick2 = now; stall_printed2 = 0; }
+
+    // Motor 3 (DC)
+    if (g_dc_running) {
+        if (enc3_pos != prev_enc3) {
+            prev_enc3 = enc3_pos; stall_tick3 = now; stall_printed3 = 0;
+        } else if ((now - stall_tick3) >= 500 && !stall_printed3) {
+            UART_Printf("[STALL] M3 DC encoder unchanged for 1s. Stopping.\r\n");
+            DC_Stop(); stall_printed3 = 1;
+        }
+    } else { prev_enc3 = enc3_pos; stall_tick3 = now; stall_printed3 = 0; }
+
+    // Motor 4
+    if (motor4.running) {
+        if (enc4_pos != prev_enc4) {
+            prev_enc4 = enc4_pos; stall_tick4 = now; stall_printed4 = 0;
+        } else if ((now - stall_tick4) >= 500 && !stall_printed4) {
+            UART_Printf("[STALL] M4 encoder unchanged for 1s. Stopping.\r\n");
+            Stepper_Stop(&motor4); stall_printed4 = 1;
+        }
+    } else { prev_enc4 = enc4_pos; stall_tick4 = now; stall_printed4 = 0; }
 }

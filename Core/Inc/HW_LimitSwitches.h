@@ -27,4 +27,5 @@ uint8_t Limit6_IsTriggered(void);
 uint8_t Motor_Limit_IsTriggered(uint8_t motor_id);
 void Limit_Safety_Service(void);
 void Software_Limit_Service(void);
+void Encoder_Stall_Service(void);
 #endif /* INC_HW_LIMITSWITCHES_H_ */
