@@ -16,10 +16,6 @@ typedef enum {
     UNIT_DEG
 } AngleUnit_t;
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846f
-#endif
-
 extern volatile int32_t enc1_pos;
 extern volatile int32_t enc2_pos;
 extern volatile int32_t enc3_pos;
@@ -35,5 +31,7 @@ void Encoders_Update(void);
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
 float Encoder_To_Angle(int32_t counts, uint32_t ppr, AngleUnit_t unit);
 float Angle_To_Distance(float angle, float pulley_diameter_mm, AngleUnit_t unit);
+float Encoder_To_Velocity(int32_t current_counts, int32_t previous_counts, float delta_time_sec, uint32_t ppr, AngleUnit_t unit);
+float Encoder_To_Velocity_Smoothed(int32_t current_counts, int32_t previous_counts, float delta_time_sec, uint32_t ppr, AngleUnit_t unit, float *filtered_vel_state);
 
 #endif /* INC_HW_ENCODERS_H_ */

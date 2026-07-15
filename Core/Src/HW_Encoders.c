@@ -56,7 +56,7 @@ void Encoders_Update(void)
 
     enc1_pos += (int32_t)(now2 - tim2_last);
     enc2_pos += (int16_t)(now3 - tim3_last);
-    enc4_pos += (int16_t)(now4 - tim4_last);
+    enc4_pos -= (int16_t)(now4 - tim4_last); // Inverted to match physical Z-axis downward movement
 
     tim2_last = now2;
     tim3_last = now3;
@@ -95,7 +95,7 @@ float Encoder_To_Angle(int32_t counts, uint32_t ppr, AngleUnit_t unit) {
         return rotations * 360.0f;
     } else {
         // Default to radians
-        return rotations * 2.0f * M_PI;
+        return rotations * 2.0f * PI;
     }
 }
 
@@ -107,4 +107,18 @@ float Angle_To_Distance(float angle, float pulley_diameter_mm, AngleUnit_t unit)
         // For radians: radius = diameter / 2. Distance = angle * radius
         return angle * (pulley_diameter_mm / 2.0f);
     }
+}
+
+float Encoder_To_Velocity(int32_t current_counts, int32_t previous_counts, float delta_time_sec, uint32_t ppr, AngleUnit_t unit) {
+    if (delta_time_sec <= 0.0001f) return 0.0f; // Prevent division by zero
+    int32_t delta_counts = current_counts - previous_counts;
+    float delta_angle = Encoder_To_Angle(delta_counts, ppr, unit);
+    return delta_angle / delta_time_sec;
+}
+
+float Encoder_To_Velocity_Smoothed(int32_t current_counts, int32_t previous_counts, float delta_time_sec, uint32_t ppr, AngleUnit_t unit, float *filtered_vel_state) {
+    float raw_vel = Encoder_To_Velocity(current_counts, previous_counts, delta_time_sec, ppr, unit);
+    extern float g_vel_filter_alpha;
+    *filtered_vel_state = (g_vel_filter_alpha * raw_vel) + ((1.0f - g_vel_filter_alpha) * (*filtered_vel_state));
+    return *filtered_vel_state;
 }
