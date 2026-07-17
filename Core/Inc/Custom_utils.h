@@ -26,6 +26,9 @@ uint8_t Is_Logging_Active(void);
 void Transfer_Test_Start(uint8_t motor_id, uint32_t freq, char dir_char, float target_deg);
 void Transfer_Test_Service(void);
 
+void Matlab_PID_Test_Start(uint8_t motor_id, char dir_char, float rel_target_deg, float kp, float kd, float time_s);
+void Matlab_PID_Test_Service(void);
+
 extern float32_t kpd_M1_1[2];
 extern float32_t kpd_M1_2[2];
 extern float32_t kpd_M2_1[2];

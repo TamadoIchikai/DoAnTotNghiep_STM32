@@ -387,6 +387,39 @@ void Robot_Start_Multi_IK(void) {
     multi_ik_active = 1;
 }
 
+static uint8_t multi_ik_pd_active = 0;
+static uint8_t multi_ik_pd_step = 0;
+static const float32_t* multi_ik_pd_targets[4];
+
+void Robot_Multi_IK_PD_Service(void) {
+    if (!multi_ik_pd_active) return;
+    if (e_stop_active) { multi_ik_pd_active = 0; return; }
+
+    extern uint8_t multi_pd_active;
+    if (!multi_pd_active) {
+        // Current move is done, dispatch next
+        if (multi_ik_pd_step >= 4) {
+            multi_ik_pd_active = 0;
+            UART_Printf("[Multi-IK-PD] Sequence complete!\r\n> ");
+            return;
+        }
+        
+        UART_Printf("\r\n[Multi-IK-PD] Moving to point %d/4...\r\n", multi_ik_pd_step + 1);
+        Robot_Set_IK_Target_PD(multi_ik_pd_targets[multi_ik_pd_step], 1);
+        multi_ik_pd_step++;
+    }
+}
+
+void Robot_Start_Multi_IK_PD(void) {
+    extern float32_t T_d[16], T_d2[16], T_d3[16], T_d4[16];
+    multi_ik_pd_targets[0] = T_d;
+    multi_ik_pd_targets[1] = T_d2;
+    multi_ik_pd_targets[2] = T_d3;
+    multi_ik_pd_targets[3] = T_d4;
+    multi_ik_pd_step = 0;
+    multi_ik_pd_active = 1;
+}
+
 // Main parallel initialization routine using encoder feedback for offset tracking
 void Robot_Init_State(float32_t init_Angle[4])
 {

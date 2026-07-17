@@ -26,4 +26,10 @@ void Robot_Joint_Task_Service(void);
 void Robot_Start_Multi_IK(void);
 void Robot_Multi_IK_Service(void);
 
+void Robot_Start_Multi_IK_PD(void);
+void Robot_Multi_IK_PD_Service(void);
+
+void Robot_Start_Multi_IK_PD(void);
+void Robot_Multi_IK_PD_Service(void);
+
 #endif /* INC_ROBOT_CONTROL_H_ */

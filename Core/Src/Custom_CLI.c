@@ -314,8 +314,15 @@ void Process_Command(char *cmd)
 
     if (strcmp(cmd, "ik_mulrun") == 0)
     {
-        UART_Printf("Starting Multi-IK Sequence (T_d -> T_d4)...\r\n");
+        UART_Printf("Starting Multi-IK Sequence (T_d -> T_d4) [OPEN LOOP]...\r\n");
         Robot_Start_Multi_IK();
+        return;
+    }
+
+    if (strcmp(cmd, "ik_mulrun_con_1") == 0)
+    {
+        UART_Printf("Starting Multi-IK Sequence (T_d -> T_d4) [CLOSED LOOP CON 1]...\r\n");
+        Robot_Start_Multi_IK_PD();
         return;
     }
 
@@ -362,6 +369,46 @@ void Process_Command(char *cmd)
         UART_Printf("Testing M%d PD to %.2f deg with Kp=%.2f Kd=%.2f\r\n", motor_id, target_deg, Kp, Kd);
         
         PD_Test_Start(motor_id, target_deg, Kp, Kd);
+        return;
+    }
+
+    if (strncmp(cmd, "pid_m", 5) == 0)
+    {
+        // Format: pid_m<id>_<dir><target>_<kp>_[kd]_[time_s] e.g., pid_m1_n180_25.5_0.3_10
+        int m_id = 0;
+        char dir_c = 0;
+        float target = 0.0f;
+        float kp = 0.0f;
+        float kd = 0.0f; // Default to 0 if not provided
+        float time_s = 10.0f; // Default to 10s if not provided
+        
+        char *ptr = cmd + 5; // Skip "pid_m"
+        m_id = atoi(ptr);
+        
+        ptr = strchr(ptr, '_');
+        if (ptr) {
+            ptr++;
+            dir_c = *ptr;
+            target = atof(ptr + 1);
+            
+            ptr = strchr(ptr, '_');
+            if (ptr) {
+                kp = atof(ptr + 1);
+                
+                ptr = strchr(ptr + 1, '_');
+                if (ptr) {
+                    kd = atof(ptr + 1);
+                    
+                    ptr = strchr(ptr + 1, '_');
+                    if (ptr) {
+                        time_s = atof(ptr + 1);
+                    }
+                }
+                Matlab_PID_Test_Start((uint8_t)m_id, dir_c, target, kp, kd, time_s);
+                return;
+            }
+        }
+        UART_Printf("Invalid format. Use pid_m<id>_<t/n><target>_<kp>_[kd]_[time_s]\r\n");
         return;
     }
 

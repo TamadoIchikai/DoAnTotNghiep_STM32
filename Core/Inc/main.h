@@ -47,7 +47,10 @@ extern float g_vel_filter_alpha;
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-
+#define M1_Err_Min 0.3f // 1600 PPR = 0.225 deg/step, must be > 0.225
+#define M2_Err_Min 0.3f // 1600 PPR = 0.225 deg/step, must be > 0.225
+#define M3_Err_Min 1.5f // DC motor with Kp=9.6 needs >1.04 deg to overcome 10 PWM friction deadband
+#define M4_Err_Min 1.0f // 800 PPR = 0.45 deg/step, must be > 0.45
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
@@ -106,6 +109,8 @@ void Error_Handler(void);
 #define M1_EN_PORT   GPIOB
 #define M1_EN_PIN    GPIO_PIN_8
 
+#define M1_STEP_VAL 1600
+
 // ======================================================
 // MOTOR 2 - TB6600
 // ======================================================
@@ -117,6 +122,8 @@ void Error_Handler(void);
 
 #define M2_EN_PORT   GPIOB
 #define M2_EN_PIN    GPIO_PIN_9
+
+#define M2_STEP_VAL 1600
 
 // ======================================================
 // MOTOR 3 - DC TB6612
@@ -141,6 +148,8 @@ void Error_Handler(void);
 
 #define M4_EN_PORT   GPIOA
 #define M4_EN_PIN    GPIO_PIN_4
+
+#define M4_STEP_VAL 800
 
 
 // PWM: PB14 / TIM12_CH1

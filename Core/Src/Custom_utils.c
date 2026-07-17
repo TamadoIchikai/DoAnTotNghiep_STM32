@@ -92,13 +92,13 @@ void PD_Test_Service(void) {
     uint32_t elapsed_time = HAL_GetTick() - pd_test.start_time;
 
     int32_t enc_pos_val = 0;
-    uint32_t ppr = 3200;
+    uint32_t ppr = M1_STEP_VAL;
     Stepper_t *motor = NULL;
 
-    if (pd_test.motor_id == 1) { enc_pos_val = enc1_pos; motor = &motor1; ppr = 3200; }
-    else if (pd_test.motor_id == 2) { enc_pos_val = enc2_pos; motor = &motor2; ppr = 1600; }
+    if (pd_test.motor_id == 1) { enc_pos_val = enc1_pos; motor = &motor1; ppr = M1_STEP_VAL; }
+    else if (pd_test.motor_id == 2) { enc_pos_val = enc2_pos; motor = &motor2; ppr = M2_STEP_VAL; }
     else if (pd_test.motor_id == 3) { enc_pos_val = enc3_pos; }
-    else if (pd_test.motor_id == 4) { enc_pos_val = enc4_pos; motor = &motor4; ppr = 800; }
+    else if (pd_test.motor_id == 4) { enc_pos_val = enc4_pos; motor = &motor4; ppr = M4_STEP_VAL; }
 
     float current_deg = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG);
     float error = pd_test.target_deg - current_deg;
@@ -118,7 +118,7 @@ void PD_Test_Service(void) {
 
     uint8_t dir;
     if (pd_test.motor_id == 3) {
-        uint16_t pwm = PD_DC_Compute(pd_test.Kp, pd_test.Kd, error, &pd_test.prev_e, &dir);
+        uint16_t pwm = PD_DC_Compute(pd_test.Kp, pd_test.Kd, error, &pd_test.prev_e, &pd_test.prev_u, &dir, M3_Err_Min);
         if (pwm > 0) {
             extern uint16_t g_dc_pwm;
             g_dc_pwm = pwm;
@@ -129,7 +129,8 @@ void PD_Test_Service(void) {
         }
         UART_Printf("[PD_DATA] %lu, %.4f, %.4f, %u\r\n", elapsed_time, current_deg, error, pwm);
     } else {
-        uint32_t interval = PD_Stepper_Compute(pd_test.Kp, pd_test.Kd, error, &pd_test.prev_e, &pd_test.prev_u, ppr, &dir);
+        float min_err = (pd_test.motor_id == 1) ? M1_Err_Min : ((pd_test.motor_id == 2) ? M2_Err_Min : M4_Err_Min);
+        uint32_t interval = PD_Stepper_Compute(pd_test.Kp, pd_test.Kd, error, &pd_test.prev_e, &pd_test.prev_u, ppr, &dir, min_err);
         if (interval == 0) {
             Stepper_Stop(motor);
         } else {
@@ -146,7 +147,7 @@ void PD_Test_Service(void) {
 #include "PoE_Kinematics.h"
 
 static PD_Test_State_t multi_pd_state[4] = {0};
-static uint8_t multi_pd_active = 0;
+uint8_t multi_pd_active = 0;
 static uint32_t multi_pd_start_time = 0;
 static uint32_t multi_pd_last_calc_time = 0;
 
@@ -213,13 +214,13 @@ void Multi_PD_Service(void) {
     // 1. Compute control effort for all 4 motors
     for (int i = 0; i < 4; i++) {
         int32_t enc_pos_val = 0;
-        uint32_t ppr = 3200;
+        uint32_t ppr = M1_STEP_VAL;
         Stepper_t *motor = NULL;
 
-        if (i == 0) { enc_pos_val = enc1_pos; motor = &motor1; ppr = 3200; }
-        else if (i == 1) { enc_pos_val = enc2_pos; motor = &motor2; ppr = 1600; }
+        if (i == 0) { enc_pos_val = enc1_pos; motor = &motor1; ppr = M1_STEP_VAL; }
+        else if (i == 1) { enc_pos_val = enc2_pos; motor = &motor2; ppr = M2_STEP_VAL; }
         else if (i == 2) { enc_pos_val = enc3_pos; }
-        else if (i == 3) { enc_pos_val = enc4_pos; motor = &motor4; ppr = 800; }
+        else if (i == 3) { enc_pos_val = enc4_pos; motor = &motor4; ppr = M4_STEP_VAL; }
 
         uint32_t enc_ppr_val = (i == 2) ? 11 : ENCODER_PPR;
         current_angles[i] = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG); // Kept ENCODER_PPR for angle for backwards compatibility
@@ -238,8 +239,14 @@ void Multi_PD_Service(void) {
         }
 
         errors[i] = multi_pd_state[i].target_deg - current_angles[i];
+        
+        float min_err = 0.2f;
+        if (multi_pd_state[i].motor_id == 1) min_err = M1_Err_Min;
+        else if (multi_pd_state[i].motor_id == 2) min_err = M2_Err_Min;
+        else if (multi_pd_state[i].motor_id == 3) min_err = M3_Err_Min;
+        else if (multi_pd_state[i].motor_id == 4) min_err = M4_Err_Min;
 
-        if (fabsf(errors[i]) < 0.2f && fabsf(multi_pd_state[i].prev_u) < 5.0f) {
+        if (fabsf(errors[i]) <= min_err && fabsf(multi_pd_state[i].prev_u) < 5.0f) {
             multi_pd_state[i].active = 0;
             if (motor) {
                 motor->targetIntervalUs = 250;
@@ -252,7 +259,7 @@ void Multi_PD_Service(void) {
             all_reached = 0;
             uint8_t dir;
             if (i == 2) { // DC Motor
-                uint16_t pwm = PD_DC_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &dir);
+                uint16_t pwm = PD_DC_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, &dir, M3_Err_Min);
                 ctrl_signals[i] = pwm;
                 if (pwm > 0) {
                     extern uint16_t g_dc_pwm;
@@ -263,7 +270,7 @@ void Multi_PD_Service(void) {
                     DC_Stop();
                 }
             } else {
-                uint32_t interval = PD_Stepper_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, ppr, &dir);
+                uint32_t interval = PD_Stepper_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, ppr, &dir, min_err);
                 ctrl_signals[i] = interval;
                 if (interval == 0) {
                     Stepper_Stop(motor);
@@ -320,9 +327,7 @@ static struct {
     uint32_t last_calc_time;
 } tf_test = {0};
 
-uint8_t Is_Logging_Active(void) {
-    return pd_test.active || multi_pd_active || tf_test.active;
-}
+// Is_Logging_Active is defined at the bottom of the file
 
 void Transfer_Test_Start(uint8_t motor_id, uint32_t freq, char dir_char, float target_deg) {
     if (motor_id < 1 || motor_id > 4) return;
@@ -410,4 +415,149 @@ void Transfer_Test_Service(void) {
     
     // Telemetry: Time, Input (Freq), Output (Velocity)
     UART_Printf("[TF_DATA] %lu, %lu, %.4f\r\n", elapsed_time, tf_test.freq, velocity);
+}
+
+// ================= MATLAB PID TEST =================
+struct {
+    uint8_t active;
+    uint8_t motor_id;
+    float target_deg;
+    float Kp;
+    float Kd;
+    float prev_e;
+    float prev_u;
+    uint32_t start_time;
+    uint32_t last_calc_time;
+    uint32_t duration_ms;
+} matlab_pid_test = {0};
+
+uint8_t Is_Logging_Active(void) {
+    return pd_test.active || multi_pd_active || tf_test.active || matlab_pid_test.active;
+}
+
+void Matlab_PID_Test_Start(uint8_t motor_id, char dir_char, float rel_target_deg, float kp, float kd, float time_s) {
+    matlab_pid_test.duration_ms = (uint32_t)(time_s * 1000.0f);
+    matlab_pid_test.motor_id = motor_id;
+    matlab_pid_test.Kp = kp;
+    matlab_pid_test.Kd = kd;
+    
+    int32_t enc_pos_val = 0;
+    if (motor_id == 1) enc_pos_val = enc1_pos;
+    else if (motor_id == 2) enc_pos_val = enc2_pos;
+    else if (motor_id == 3) enc_pos_val = enc3_pos;
+    else if (motor_id == 4) enc_pos_val = enc4_pos;
+
+    float start_deg = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG);
+    
+    // dir_char 'n' means negative offset, 't' means positive offset
+    matlab_pid_test.target_deg = start_deg + ((dir_char == 'n') ? -rel_target_deg : rel_target_deg);
+    
+    matlab_pid_test.prev_e = 0;
+    matlab_pid_test.prev_u = 0;
+    matlab_pid_test.start_time = HAL_GetTick();
+    matlab_pid_test.last_calc_time = matlab_pid_test.start_time;
+    matlab_pid_test.active = 1;
+    
+    if (motor_id == 1) Stepper_Enable(&motor1);
+    else if (motor_id == 2) Stepper_Enable(&motor2);
+    else if (motor_id == 4) Stepper_Enable(&motor4);
+    
+    UART_Printf("\r\n[MOTOR_KP_TUNE_START] M%d, Dir=%c, Target=%.2f, Kp=%.2f, Kd=%.2f\r\n", motor_id, dir_char, matlab_pid_test.target_deg, kp, kd);
+}
+
+void Matlab_PID_Test_Service(void) {
+    if (!matlab_pid_test.active) return;
+    
+    extern uint8_t e_stop_active;
+    if (e_stop_active) {
+        matlab_pid_test.active = 0;
+        Stepper_All_Stop();
+        DC_Stop();
+        UART_Printf("[MOTOR_KP_TUNE_END] ESTOP\r\n");
+        return;
+    }
+    
+    if (HAL_GetTick() - matlab_pid_test.last_calc_time < 10) return;
+    
+    float delta_t = (HAL_GetTick() - matlab_pid_test.last_calc_time) / 1000.0f;
+    if (delta_t <= 0) delta_t = 0.01f;
+    matlab_pid_test.last_calc_time = HAL_GetTick();
+    
+    uint32_t elapsed_time = HAL_GetTick() - matlab_pid_test.start_time;
+    
+    int32_t enc_pos_val = 0;
+    uint32_t ppr = M1_STEP_VAL;
+    Stepper_t *motor = NULL;
+    
+    if (matlab_pid_test.motor_id == 1) { enc_pos_val = enc1_pos; motor = &motor1; ppr = M1_STEP_VAL; }
+    else if (matlab_pid_test.motor_id == 2) { enc_pos_val = enc2_pos; motor = &motor2; ppr = M2_STEP_VAL; }
+    else if (matlab_pid_test.motor_id == 3) { enc_pos_val = enc3_pos; }
+    else if (matlab_pid_test.motor_id == 4) { enc_pos_val = enc4_pos; motor = &motor4; ppr = M4_STEP_VAL; }
+    
+    float current_deg = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG);
+    
+    static int32_t prev_enc = 0;
+    static float filtered_vel = 0.0f;
+    float velocity = 0.0f;
+    uint32_t enc_ppr_val = (matlab_pid_test.motor_id == 3) ? 11 : ENCODER_PPR;
+    
+    if (elapsed_time < 15) {
+        velocity = Encoder_To_Velocity(enc_pos_val, prev_enc, delta_t, enc_ppr_val, UNIT_DEG);
+        filtered_vel = velocity;
+    } else {
+        velocity = Encoder_To_Velocity_Smoothed(enc_pos_val, prev_enc, delta_t, enc_ppr_val, UNIT_DEG, &filtered_vel);
+    }
+    prev_enc = enc_pos_val;
+    
+    float error = matlab_pid_test.target_deg - current_deg;
+    float current_time_s = elapsed_time / 1000.0f;
+    
+    uint8_t dir;
+    float freq = 0.0f;
+    uint32_t interval = 0;
+    uint16_t pwm = 0;
+    
+    if (matlab_pid_test.motor_id == 3) {
+        pwm = PD_DC_Compute(matlab_pid_test.Kp, matlab_pid_test.Kd, error, &matlab_pid_test.prev_e, &matlab_pid_test.prev_u, &dir, M3_Err_Min);
+        freq = (float)pwm; // Output PWM for DC motor
+    } else {
+        float min_err = (matlab_pid_test.motor_id == 1) ? M1_Err_Min : ((matlab_pid_test.motor_id == 2) ? M2_Err_Min : M4_Err_Min);
+        interval = PD_Stepper_Compute(matlab_pid_test.Kp, matlab_pid_test.Kd, error, &matlab_pid_test.prev_e, &matlab_pid_test.prev_u, ppr, &dir, min_err);
+        if (interval > 0) {
+            freq = 1000000.0f / (float)interval;
+        }
+    }
+    
+    // Output format for MATLAB: time(s), Ref angle, current encoder value (in deg), encoder velocity value (in deg/s), kp value, frequency (Hz)
+    UART_Printf("[MOTOR_KP_TUNE] %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\r\n", current_time_s, matlab_pid_test.target_deg, current_deg, velocity, matlab_pid_test.Kp, freq);
+    
+    if (elapsed_time >= matlab_pid_test.duration_ms) {
+        matlab_pid_test.active = 0;
+        if (motor) {
+            motor->targetIntervalUs = 250;
+            Stepper_Stop(motor);
+        } else {
+            DC_Stop();
+        }
+        UART_Printf("[MOTOR_KP_TUNE_END] TIME REACHED\r\n> ");
+        return;
+    }
+    
+    if (matlab_pid_test.motor_id == 3) {
+        if (pwm > 0) {
+            extern uint16_t g_dc_pwm;
+            g_dc_pwm = pwm;
+            __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, pwm);
+            DC_Start(dir);
+        } else {
+            DC_Stop();
+        }
+    } else {
+        if (interval == 0) {
+            Stepper_Stop(motor);
+        } else {
+            Stepper_Start(motor, matlab_pid_test.motor_id, dir);
+            motor->targetIntervalUs = interval;
+        }
+    }
 }

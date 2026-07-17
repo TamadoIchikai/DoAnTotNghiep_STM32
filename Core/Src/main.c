@@ -155,14 +155,14 @@ volatile int32_t enc4_pos = 0;
 
 float32_t M1_Lim_Deg = 180.0f;
 float32_t M2_Lim_Deg = 200.0f;
-float32_t M3_Lim_Deg = 150.0f;
-float32_t M4_Lim_mm  = 85.0f;
+float32_t M3_Lim_Deg = 180.0f;
+float32_t M4_Lim_mm  = 90.0f;
 float32_t M4_Pulley_Linear_Dia = 13.0f;
 
 float32_t robot_Init_Angle[4] = {-15.0f,38.0f,0.0f,-10.0f};
 float32_t robot_Init_Pose[4] = {PI/2, -PI/2, 0, 0};
 
-float32_t M_home_matlab[16] = {01.0f, 0.0f, 0.0f, L1+L2,
+float32_t M_home_matlab[16] = {1.0f, 0.0f, 0.0f, L1+L2,
 					     	   	0.0f, 1.0f, 0.0f, 0.0f,
 					    		0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
 					    		0.0f, 0.0f, 0.0f, 1.0f};
@@ -173,12 +173,12 @@ float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
 							1.0f, 1.0f, 1.0f, 0.0f,
 							0.0f, 0.0f, 0.0f, 0.0f,
 							0.0f, -L1, -(L1+L2), 0.0f,
-							0.0f, 0.0f, 0.0f, -1.0f};
-
+							0.0f, 0.0f, 0.0f, 1.0f};
+// 0.267, 0.002
 // IK test target: straight arm along X axis
-float32_t T_d[16] = {1.0f, 0.0f, 0.0f, L1+L2,
-                     0.0f, 1.0f, 0.0f, 0.0f,
-                     0.0f, 0.0f, 1.0f, 0.05f,
+float32_t T_d[16] = {1.0f, 0.0f, 0.0f, (0.390f-0.124f),
+                     0.0f, 1.0f, 0.0f, (0.224f-0.037f),
+                     0.0f, 0.0f, 1.0f, 0.025f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 // IK test target: straight arm along X axis
@@ -190,7 +190,7 @@ float32_t T_d2[16] = {1.0f, 0.0f, 0.0f, 0.268f,
 // IK test target: straight arm along X axis
 float32_t T_d3[16] = {1.0f, 0.0f, 0.0f, 0.268f,
                      0.0f, 1.0f, 0.0f, -0.064f,
-                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+                     0.0f, 0.0f, 1.0f, 0.01,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 // IK test target: straight arm along X axis
@@ -200,13 +200,13 @@ float32_t T_d4[16] = {1.0f, 0.0f, 0.0f, 0.204f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 
-float32_t kpd_M1_1[2] = {10.0f, 0.0f};
-float32_t kpd_M1_2[2] = {20.0f, 0.0f};
+float32_t kpd_M1_1[2] = {22.0f, 0.0f};
+float32_t kpd_M1_2[2] = {10.0f, 0.0f};
 float32_t kpd_M2_1[2] = {20.0f, 0.0f};
-float32_t kpd_M2_2[2] = {30.0f, 0.0f};
-float32_t kpd_M3_1[2] = {1.0f, 0.0f};
-float32_t kpd_M3_2[2] = {1.0f, 0.0f};
-float32_t kpd_M4_1[2] = {1.0f, 0.0f};
+float32_t kpd_M2_2[2] = {20.0f, 0.0f};
+float32_t kpd_M3_1[2] = {8.0f, 1.0f};
+float32_t kpd_M3_2[2] = {9.6f, 1.8f};
+float32_t kpd_M4_1[2] = {10.0f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
 float32_t kpd_M4_2[2] = {1.0f, 0.0f};
 
 /* USER CODE END PV */
@@ -406,9 +406,11 @@ int main(void)
           Encoder_Stall_Service();
           Robot_Joint_Task_Service();
           Robot_Multi_IK_Service();
+          Robot_Multi_IK_PD_Service();
           PD_Test_Service();
           Multi_PD_Service();
           Transfer_Test_Service();
+          Matlab_PID_Test_Service();
 
           UART_TX_Service();
 
@@ -764,9 +766,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA12 */
+  /*Configure GPIO pin : PA12 (Encoder B - also EXTI for state machine) */
   GPIO_InitStruct.Pin = GPIO_PIN_12;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
