@@ -65,19 +65,38 @@ void Encoders_Update(void)
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
-    if (GPIO_Pin == GPIO_PIN_11)
+    if (GPIO_Pin == GPIO_PIN_11 || GPIO_Pin == GPIO_PIN_12)
     {
-        GPIO_PinState a = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_11);
-        GPIO_PinState b = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_12);
+        // Quadrature State Machine (4X Decoding)
+        //
+        // This lookup table maps every (old_state -> new_state) transition to:
+        //   +1 = forward step,  -1 = reverse step,  0 = invalid/no change
+        //
+        // State encoding: 2-bit value where bit1 = B (PA12), bit0 = A (PA11)
+        //
+        // Valid forward  sequence: 00 -> 01 -> 11 -> 10 -> 00
+        // Valid reverse  sequence: 00 -> 10 -> 11 -> 01 -> 00
+        // Invalid transitions (noise/bounce) return 0 and are silently ignored.
+        //
+        static const int8_t QEM[16] = {
+        //  new:  00  01  10  11
+        //  old:
+        /* 00 */   0, +1, -1,  0,
+        /* 01 */  -1,  0,  0, +1,
+        /* 10 */  +1,  0,  0, -1,
+        /* 11 */   0, -1, +1,  0
+        };
 
-        if (a == b)
-        {
-            enc3_pos += DC_ENCODER_SIGN;
-        }
-        else
-        {
-            enc3_pos -= DC_ENCODER_SIGN;
-        }
+        static uint8_t old_state = 0;
+
+        // Read PA11 (A) and PA12 (B) simultaneously from one register snapshot
+        uint32_t idr = GPIOA->IDR;
+        uint8_t new_state = ((idr >> 11) & 0x03);  // bits [12:11] -> [B:A]
+
+        int8_t direction = QEM[(old_state << 2) | new_state];
+        enc3_pos += direction * DC_ENCODER_SIGN;
+
+        old_state = new_state;
     }
 }
 

@@ -77,7 +77,7 @@ void Error_Handler(void);
 #define ACCEL_STEP_US             8
 
 #define DC_PWM_MAX                999
-#define DEFAULT_DC_PWM            125
+#define DEFAULT_DC_PWM            50
 
 #define AUTO_STATUS_ENABLE        1
 #define STATUS_PERIOD_MS          700
@@ -92,7 +92,7 @@ void Error_Handler(void);
 #define ENCODER_CPR_X4            (ENCODER_PPR * 4)
 
 // Nếu encoder DC đếm ngược chiều mong muốn, đổi 1 thành -1.
-#define DC_ENCODER_SIGN           1
+#define DC_ENCODER_SIGN           -1
 
 // ======================================================
 // MOTOR 1 - DM542
