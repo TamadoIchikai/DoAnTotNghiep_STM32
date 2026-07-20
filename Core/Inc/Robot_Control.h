@@ -32,4 +32,17 @@ void Robot_Multi_IK_PD_Service(void);
 void Robot_Start_Multi_IK_PD(void);
 void Robot_Multi_IK_PD_Service(void);
 
+typedef enum {
+    AUTO_STATE_IDLE = 0,
+    AUTO_STATE_MOVE_XY,
+    AUTO_STATE_MOVE_Z_DOWN,
+    AUTO_STATE_WAIT_SWITCH,
+    AUTO_STATE_DELAY,
+    AUTO_STATE_MOVE_Z_UP,
+    AUTO_STATE_DONE
+} Auto_Sequence_State_t;
+
+void Robot_Start_Auto_Sequence(float angle, float x, float y);
+void Robot_Auto_Sequence_Service(void);
+
 #endif /* INC_ROBOT_CONTROL_H_ */

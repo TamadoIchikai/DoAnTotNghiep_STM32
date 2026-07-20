@@ -20,8 +20,8 @@ uint32_t PD_Stepper_Compute(float Kp, float Kd, float error, float *prev_error, 
     
     // Asymmetric Slew Rate (Acceleration Limiter)
     // We allow faster deceleration than acceleration to prevent overshoot and limit-cycle vibrations!
-    float max_accel = 50.0f; 
-    float max_decel = 250.0f; 
+    float max_accel = 100.0f;
+    float max_decel = 100.0f;
     
     // Determine if we are accelerating or decelerating
     // Accelerating: u and prev_u have same sign, and |u| > |prev_u|

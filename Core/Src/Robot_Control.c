@@ -6,7 +6,10 @@
 #include "Custom_CLI.h"       // For UART_Printf
 #include "HW_LimitSwitches.h" // For Motor_Limit_IsTriggered
 #include "HW_Encoders.h"      // For Encoders_Reset, Encoder_To_Angle
-#include "Custom_utils.h"     // For delay_us, micros
+#include "Custom_utils.h"
+
+uint8_t PTP_RUN_OPEN_FLAG = 0;
+uint32_t ptp_open_start_time = 0;     // For delay_us, micros
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -315,8 +318,11 @@ void Robot_Set_Joint_Target(uint8_t motor_id, uint8_t dir, float32_t target_deg)
 void Robot_Joint_Task_Service(void) {
     if (e_stop_active) {
         for(int i = 1; i <= 4; i++) joint_moves[i].active = 0;
+        PTP_RUN_OPEN_FLAG = 0;
         return;
     }
+
+    uint8_t any_active = 0;
 
     for (int i = 1; i <= 4; i++) {
         if (!joint_moves[i].active) continue;
@@ -344,6 +350,46 @@ void Robot_Joint_Task_Service(void) {
             else if (i == 4) Stepper_Stop(&motor4);
             UART_Printf("\r\n[!] Motor %d reached target %.2f deg\r\n> ", i, joint_moves[i].target_angle);
         }
+        
+        if (joint_moves[i].active) any_active = 1;
+    }
+
+    if (PTP_RUN_OPEN_FLAG) {
+        static uint32_t last_log_time = 0;
+        if (any_active && HAL_GetTick() - last_log_time >= 10) {
+            last_log_time = HAL_GetTick();
+            
+            extern float32_t robot_Init_Pose[4];
+            extern float32_t M_home_matlab[16];
+            extern float32_t S[24];
+            extern float32_t M4_Pulley_Linear_Dia;
+
+            float32_t thetalist[4];
+            thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[0];
+            thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[1];
+            thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[2];
+            float32_t m4_rad = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_RAD);
+            thetalist[3] = (Angle_To_Distance(m4_rad, M4_Pulley_Linear_Dia, UNIT_RAD) / 1000.0f) + robot_Init_Pose[3];
+
+            float32_t T_EE[16];
+            ForwardKinematics_Space(M_home_matlab, S, thetalist, 4, T_EE);
+
+            float32_t x = T_EE[3];
+            float32_t y = T_EE[7];
+            float32_t z = T_EE[11];
+            float32_t angle_Out = atan2f(T_EE[4], T_EE[0]) * 180.0f / PI;
+
+            extern float32_t ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D;
+            
+            UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
+                        HAL_GetTick() - ptp_open_start_time, ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D,
+                        x, y, z, angle_Out);
+        }
+        
+        if (!any_active) {
+            PTP_RUN_OPEN_FLAG = 0;
+            UART_Printf("[MPD_END] REACHED\r\n> ");
+        }
     }
 }
 
@@ -353,6 +399,9 @@ static uint8_t multi_ik_step = 0;
 static const float32_t* multi_ik_targets[4];
 
 uint8_t Robot_Is_Moving(void) {
+    extern uint8_t multi_pd_active;
+    if (multi_pd_active) return 1;
+
     for (int i=1; i<=4; i++) {
         if (joint_moves[i].active) return 1;
     }
@@ -572,4 +621,92 @@ void Robot_Init_State(float32_t init_Angle[4])
     // Establish the final offset resting position as the operational angle zero
     Encoders_Reset();
     UART_Printf("--- PARALLEL INITIALIZATION COMPLETE ---\r\n");
+}
+
+// ==============================================================
+// AUTOMATED PICK SEQUENCE
+// ==============================================================
+#include "HW_EndEffector.h" // For Magnet_On/Off
+
+static Auto_Sequence_State_t auto_state = AUTO_STATE_IDLE;
+static float auto_angle = 0.0f;
+static float auto_x = 0.0f;
+static float auto_y = 0.0f;
+static uint32_t auto_delay_start = 0;
+
+void Robot_Start_Auto_Sequence(float angle, float x, float y) {
+    if (auto_state != AUTO_STATE_IDLE) {
+        UART_Printf("Error: Auto sequence already running.\r\n");
+        return;
+    }
+    auto_angle = angle;
+    auto_x = x;
+    auto_y = y;
+    auto_state = AUTO_STATE_MOVE_XY;
+    UART_Printf("\r\n[AUTO] Starting automated pick sequence...\r\n");
+    
+    Magnet_On();
+    
+    float32_t T_d[16];
+    Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.08, T_d);
+    Robot_Set_IK_Target_PD(T_d, 1);
+}
+
+void Robot_Auto_Sequence_Service(void) {
+    if (auto_state == AUTO_STATE_IDLE) return;
+    
+    if (e_stop_active) {
+        auto_state = AUTO_STATE_IDLE;
+        return;
+    }
+
+    switch(auto_state) {
+        case AUTO_STATE_MOVE_XY:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Reached X,Y. Moving Z down...\r\n");
+                auto_state = AUTO_STATE_MOVE_Z_DOWN;
+                
+                float32_t T_d[16];
+                Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.015f, T_d);
+                Robot_Set_IK_Target_PD(T_d, 1);
+            }
+            break;
+            
+        case AUTO_STATE_MOVE_Z_DOWN:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Reached Z down. Waiting for Limit 5 and 6...\r\n");
+                auto_state = AUTO_STATE_WAIT_SWITCH;
+            }
+            break;
+            
+        case AUTO_STATE_WAIT_SWITCH:
+            if (Limit5_IsTriggered() && Limit6_IsTriggered()) {
+                UART_Printf("[AUTO] Limit 5 & 6 triggered. Delaying 200ms...\r\n");
+                auto_delay_start = HAL_GetTick();
+                auto_state = AUTO_STATE_DELAY;
+            }
+            break;
+            
+        case AUTO_STATE_DELAY:
+            if (HAL_GetTick() - auto_delay_start >= 200) {
+                UART_Printf("[AUTO] Delay complete. Moving Z up...\r\n");
+                auto_state = AUTO_STATE_MOVE_Z_UP;
+                
+                float32_t T_d[16];
+                Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.08, T_d);
+                Robot_Set_IK_Target_PD(T_d, 1);
+            }
+            break;
+            
+        case AUTO_STATE_MOVE_Z_UP:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Z up complete. Sequence done.\r\n> ");
+                auto_state = AUTO_STATE_IDLE;
+            }
+            break;
+            
+        default:
+            auto_state = AUTO_STATE_IDLE;
+            break;
+    }
 }

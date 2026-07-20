@@ -145,11 +145,61 @@ void PD_Test_Service(void) {
 // Multi-Motor PD Test State Machine for IK Trajectory
 // ---------------------------------------------------------
 #include "PoE_Kinematics.h"
+#include "HW_Encoders.h"
+
+void Convert_PTP_to_Td(float thetaD, float pos_x, float pos_y, float pos_z, float32_t *T_d_out) {
+    extern float32_t robot_Init_Pose[4];
+    extern float32_t M_home_matlab[16];
+    extern float32_t S[24];
+    extern float32_t M4_Pulley_Linear_Dia;
+
+    float32_t thetalist[4];
+    thetalist[0] = Encoder_To_Angle(enc1_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[0];
+    thetalist[1] = Encoder_To_Angle(enc2_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[1];
+    thetalist[2] = Encoder_To_Angle(enc3_pos, ENCODER_PPR, UNIT_RAD) + robot_Init_Pose[2];
+    float32_t m4_rad = Encoder_To_Angle(enc4_pos, ENCODER_PPR, UNIT_RAD);
+    thetalist[3] = (Angle_To_Distance(m4_rad, M4_Pulley_Linear_Dia, UNIT_RAD) / 1000.0f) + robot_Init_Pose[3];
+
+    float32_t T_EE[16];
+    ForwardKinematics_Space(M_home_matlab, S, thetalist, 4, T_EE);
+    
+    float32_t thetaD_rad = thetaD * PI / 180.0f;
+    float32_t c = cosf(thetaD_rad);
+    float32_t s = sinf(thetaD_rad);
+    
+    T_d_out[0]  = T_EE[0]*c + T_EE[1]*s;
+    T_d_out[1]  = T_EE[0]*(-s) + T_EE[1]*c;
+    T_d_out[2]  = T_EE[2];
+    T_d_out[3]  = pos_x;
+    
+    T_d_out[4]  = T_EE[4]*c + T_EE[5]*s;
+    T_d_out[5]  = T_EE[4]*(-s) + T_EE[5]*c;
+    T_d_out[6]  = T_EE[6];
+    T_d_out[7]  = pos_y;
+    
+    T_d_out[8]  = T_EE[8]*c + T_EE[9]*s;
+    T_d_out[9]  = T_EE[8]*(-s) + T_EE[9]*c;
+    T_d_out[10] = T_EE[10];
+    T_d_out[11] = pos_z;
+    
+    T_d_out[12] = 0.0f;
+    T_d_out[13] = 0.0f;
+    T_d_out[14] = 0.0f;
+    T_d_out[15] = 1.0f;
+}
+
+
+uint8_t PTP_RUN_CON_FLAG = 0;
+float32_t ptp_pos_D_x = 0;
+float32_t ptp_pos_D_y = 0;
+float32_t ptp_pos_D_z = 0;
+float32_t ptp_angle_D = 0;
 
 static PD_Test_State_t multi_pd_state[4] = {0};
 uint8_t multi_pd_active = 0;
 static uint32_t multi_pd_start_time = 0;
 static uint32_t multi_pd_last_calc_time = 0;
+static uint32_t multi_pd_stable_start = 0;
 
 void Multi_PD_Start(float32_t target_abs_deg[4], uint8_t param_idx) {
     float32_t *kp_M1 = (param_idx == 1) ? kpd_M1_1 : kpd_M1_2;
@@ -176,6 +226,7 @@ void Multi_PD_Start(float32_t target_abs_deg[4], uint8_t param_idx) {
     multi_pd_active = 1;
     multi_pd_start_time = HAL_GetTick();
     multi_pd_last_calc_time = HAL_GetTick();
+    multi_pd_stable_start = 0;
 
     UART_Printf("\r\n[MPD_START] Multi-Motor PD Controller Started\r\n");
 }
@@ -186,6 +237,7 @@ void Multi_PD_Service(void) {
     extern uint8_t e_stop_active;
     if (e_stop_active) {
         multi_pd_active = 0;
+        PTP_RUN_CON_FLAG = 0;
         Stepper_All_Stop();
         DC_Stop();
         UART_Printf("[MPD_END] ESTOP\r\n");
@@ -246,38 +298,30 @@ void Multi_PD_Service(void) {
         else if (multi_pd_state[i].motor_id == 3) min_err = M3_Err_Min;
         else if (multi_pd_state[i].motor_id == 4) min_err = M4_Err_Min;
 
-        if (fabsf(errors[i]) <= min_err && fabsf(multi_pd_state[i].prev_u) < 5.0f) {
-            multi_pd_state[i].active = 0;
-            if (motor) {
-                motor->targetIntervalUs = 250;
-                Stepper_Stop(motor);
+        if (fabsf(errors[i]) > min_err || fabsf(multi_pd_state[i].prev_u) >= 5.0f) {
+            all_reached = 0;
+        }
+
+        uint8_t dir;
+        if (i == 2) { // DC Motor
+            uint16_t pwm = PD_DC_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, &dir, M3_Err_Min);
+            ctrl_signals[i] = pwm;
+            if (pwm > 0) {
+                extern uint16_t g_dc_pwm;
+                g_dc_pwm = pwm;
+                __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, pwm);
+                DC_Start(dir);
             } else {
                 DC_Stop();
             }
-            ctrl_signals[i] = 0;
         } else {
-            all_reached = 0;
-            uint8_t dir;
-            if (i == 2) { // DC Motor
-                uint16_t pwm = PD_DC_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, &dir, M3_Err_Min);
-                ctrl_signals[i] = pwm;
-                if (pwm > 0) {
-                    extern uint16_t g_dc_pwm;
-                    g_dc_pwm = pwm;
-                    __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, pwm);
-                    DC_Start(dir);
-                } else {
-                    DC_Stop();
-                }
+            uint32_t interval = PD_Stepper_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, ppr, &dir, min_err);
+            ctrl_signals[i] = interval;
+            if (interval == 0) {
+                Stepper_Stop(motor);
             } else {
-                uint32_t interval = PD_Stepper_Compute(multi_pd_state[i].Kp, multi_pd_state[i].Kd, errors[i], &multi_pd_state[i].prev_e, &multi_pd_state[i].prev_u, ppr, &dir, min_err);
-                ctrl_signals[i] = interval;
-                if (interval == 0) {
-                    Stepper_Stop(motor);
-                } else {
-                    Stepper_Start(motor, multi_pd_state[i].motor_id, dir);
-                    motor->targetIntervalUs = interval;
-                }
+                Stepper_Start(motor, multi_pd_state[i].motor_id, dir);
+                motor->targetIntervalUs = interval;
             }
         }
     }
@@ -301,17 +345,36 @@ void Multi_PD_Service(void) {
     float32_t y = T_EE[7];
     float32_t z = T_EE[11];
 
-    // 3. Print Telemetry (time, X,Y,Z, ref1,enc1,vel1,u1, ref2,enc2,vel2,u2, ref3,enc3,vel3,u3, ref4,enc4,vel4,u4)
-    UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu\r\n",
-                elapsed_time, x, y, z,
-                multi_pd_state[0].target_deg, current_angles[0], velocities[0], ctrl_signals[0],
-                multi_pd_state[1].target_deg, current_angles[1], velocities[1], ctrl_signals[1],
-                multi_pd_state[2].target_deg, current_angles[2], velocities[2], ctrl_signals[2],
-                multi_pd_state[3].target_deg, current_angles[3], velocities[3], ctrl_signals[3]);
+    float32_t angle_Out = atan2f(T_EE[4], T_EE[0]) * 180.0f / PI;
+
+    // 3. Print Telemetry
+    if (PTP_RUN_CON_FLAG) {
+        UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
+                    elapsed_time, ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D,
+                    x, y, z, angle_Out);
+    } else {
+        UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu\r\n",
+                    elapsed_time, x, y, z,
+                    multi_pd_state[0].target_deg, current_angles[0], velocities[0], ctrl_signals[0],
+                    multi_pd_state[1].target_deg, current_angles[1], velocities[1], ctrl_signals[1],
+                    multi_pd_state[2].target_deg, current_angles[2], velocities[2], ctrl_signals[2],
+                    multi_pd_state[3].target_deg, current_angles[3], velocities[3], ctrl_signals[3]);
+    }
 
     if (all_reached) {
-        multi_pd_active = 0;
-        UART_Printf("[MPD_END] REACHED\r\n> ");
+        if (multi_pd_stable_start == 0) {
+            multi_pd_stable_start = HAL_GetTick();
+        } else if (HAL_GetTick() - multi_pd_stable_start >= 500) {
+            for (int i = 0; i < 4; i++) multi_pd_state[i].active = 0;
+            multi_pd_active = 0;
+            PTP_RUN_CON_FLAG = 0;
+            Stepper_All_Stop();
+            DC_Stop();
+            UART_Printf("[MPD_END] REACHED\r\n> ");
+            multi_pd_stable_start = 0;
+        }
+    } else {
+        multi_pd_stable_start = 0;
     }
 }
 

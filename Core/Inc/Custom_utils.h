@@ -23,6 +23,9 @@ void Multi_PD_Start(float32_t target_abs_deg[4], uint8_t param_idx);
 void Multi_PD_Service(void);
 uint8_t Is_Logging_Active(void);
 
+void Convert_PTP_to_Td(float thetaD, float pos_x, float pos_y, float pos_z, float32_t *T_d_out);
+
+
 void Transfer_Test_Start(uint8_t motor_id, uint32_t freq, char dir_char, float target_deg);
 void Transfer_Test_Service(void);
 

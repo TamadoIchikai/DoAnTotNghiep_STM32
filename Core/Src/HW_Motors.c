@@ -93,7 +93,7 @@ void Stepper_Stop(Stepper_t *m)
     m->stepHigh = 0;
 
     HAL_GPIO_WritePin(m->stepPort, m->stepPin, GPIO_PIN_RESET);
-    Stepper_Disable(m);
+    // Removed Stepper_Disable(m) to maintain holding torque and prevent the Z-axis from dropping under gravity/magnet weight!
 }
 
 void Stepper_Start(Stepper_t *m, uint8_t motor_id, uint8_t forward)

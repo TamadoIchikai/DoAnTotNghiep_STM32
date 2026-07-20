@@ -25,7 +25,7 @@
 #include "Controllers.h"
 
 uint8_t e_stop_active = 0;
-char rx_cmd[32];
+char rx_cmd[64];
 uint8_t rx_index = 0;
 
 extern Stepper_t motor1;
@@ -323,6 +323,96 @@ void Process_Command(char *cmd)
     {
         UART_Printf("Starting Multi-IK Sequence (T_d -> T_d4) [CLOSED LOOP CON 1]...\r\n");
         Robot_Start_Multi_IK_PD();
+        return;
+    }
+
+    if (strncmp(cmd, "ptp_run_con_", 12) == 0)
+    {
+        int con_id = 0;
+        float thetaD = 0.0f;
+        float pos_x = 0.0f;
+        float pos_y = 0.0f;
+        float pos_z = 0.0f;
+
+        if (sscanf(cmd, "ptp_run_con_%d_%f_%f_%f_%f", &con_id, &thetaD, &pos_x, &pos_y, &pos_z) == 5) {
+            if (con_id != 1 && con_id != 2) {
+                UART_Printf("Invalid controller ID. Use 1 or 2.\r\n");
+                return;
+            }
+            
+            extern float32_t T_d[16];
+            Convert_PTP_to_Td(thetaD, pos_x, pos_y, pos_z, T_d);
+            
+            UART_Printf("IK Target T_d (4x4) from ptp:\r\n");
+            for (int i = 0; i < 4; i++) {
+                UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n",
+                    T_d[i*4], T_d[i*4+1], T_d[i*4+2], T_d[i*4+3]);
+            }
+            
+            extern uint8_t PTP_RUN_CON_FLAG;
+            extern float32_t ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D;
+            
+            PTP_RUN_CON_FLAG = 1;
+            ptp_pos_D_x = pos_x;
+            ptp_pos_D_y = pos_y;
+            ptp_pos_D_z = pos_z;
+            ptp_angle_D = atan2f(T_d[4], T_d[0]) * 180.0f / PI;
+
+            Robot_Set_IK_Target_PD(T_d, con_id);
+            UART_Printf("IK active. Moving using Multi-PD param set %d...\r\n", con_id);
+        } else {
+            UART_Printf("Format: ptp_run_con_<id>_<thetaD>_<X>_<Y>_<Z>\r\n");
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "ptp_run_", 8) == 0 && strncmp(cmd, "ptp_run_con_", 12) != 0)
+    {
+        float thetaD = 0.0f;
+        float pos_x = 0.0f;
+        float pos_y = 0.0f;
+        float pos_z = 0.0f;
+
+        if (sscanf(cmd, "ptp_run_%f_%f_%f_%f", &thetaD, &pos_x, &pos_y, &pos_z) == 4) {
+            extern float32_t T_d[16];
+            Convert_PTP_to_Td(thetaD, pos_x, pos_y, pos_z, T_d);
+            
+            UART_Printf("IK Target T_d (4x4) from ptp:\r\n");
+            for (int i = 0; i < 4; i++) {
+                UART_Printf("[ %6.4f, %6.4f, %6.4f, %6.4f ]\r\n",
+                    T_d[i*4], T_d[i*4+1], T_d[i*4+2], T_d[i*4+3]);
+            }
+            
+            extern uint8_t PTP_RUN_OPEN_FLAG;
+            extern uint32_t ptp_open_start_time;
+            extern float32_t ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D;
+            
+            PTP_RUN_OPEN_FLAG = 1;
+            ptp_open_start_time = HAL_GetTick();
+            ptp_pos_D_x = pos_x;
+            ptp_pos_D_y = pos_y;
+            ptp_pos_D_z = pos_z;
+            ptp_angle_D = atan2f(T_d[4], T_d[0]) * 180.0f / PI;
+
+            UART_Printf("\r\n[MPD_START] Open-Loop PTP Started\r\n");
+            Robot_Set_IK_Target(T_d);
+            UART_Printf("IK active. Moving to target (Open-loop)...\r\n");
+        } else {
+            UART_Printf("Format: ptp_run_<thetaD>_<X>_<Y>_<Z>\r\n");
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "auto_con_1_mag_on_", 18) == 0) {
+        float angle = 0.0f;
+        float x = 0.0f;
+        float y = 0.0f;
+
+        if (sscanf(cmd, "auto_con_1_mag_on_%f_%f_%f", &angle, &x, &y) == 3) {
+            Robot_Start_Auto_Sequence(angle, x, y);
+        } else {
+            UART_Printf("Format: auto_con_1_mag_on_<angle>_<X>_<Y>\r\n");
+        }
         return;
     }
 

@@ -176,27 +176,27 @@ float32_t S[24] = {0.0f, 0.0f, 0.0f, 0.0f,
 							0.0f, 0.0f, 0.0f, 1.0f};
 // 0.267, 0.002
 // IK test target: straight arm along X axis
-float32_t T_d[16] = {1.0f, 0.0f, 0.0f, (0.390f-0.124f),
-                     0.0f, 1.0f, 0.0f, (0.224f-0.037f),
-                     0.0f, 0.0f, 1.0f, 0.025f,
+float32_t T_d[16] = {1.0f, 0.0f, 0.0f, 0.250f,
+                     0.0f, 1.0f, 0.0f, -0.011f,
+                     0.0f, 0.0f, 1.0f, 0.08f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 // IK test target: straight arm along X axis
-float32_t T_d2[16] = {1.0f, 0.0f, 0.0f, 0.268f,
-                     0.0f, 1.0f, 0.0f, 0.064f,
-                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+float32_t T_d2[16] = {1.0f, 0.0f, 0.0f, 0.250f,
+                     0.0f, 1.0f, 0.0f, -0.011f,
+                     0.0f, 0.0f, 1.0f, 0.02f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 // IK test target: straight arm along X axis
-float32_t T_d3[16] = {1.0f, 0.0f, 0.0f, 0.268f,
-                     0.0f, 1.0f, 0.0f, -0.064f,
-                     0.0f, 0.0f, 1.0f, 0.01,
+float32_t T_d3[16] = {1.0f, 0.0f, 0.0f, 0.250f,
+                     0.0f, 1.0f, 0.0f, -0.011f,
+                     0.0f, 0.0f, 1.0f, 0.08f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 // IK test target: straight arm along X axis
-float32_t T_d4[16] = {1.0f, 0.0f, 0.0f, 0.204f,
-                     0.0f, 1.0f, 0.0f, 0.0f,
-                     0.0f, 0.0f, 1.0f, D1+D2+D3-D_EE,
+float32_t T_d4[16] = {1.0f, 0.0f, 0.0f, 0.250f,
+                     0.0f, 1.0f, 0.0f, -0.011f,
+                     0.0f, 0.0f, 1.0f, 0.02f,
                      0.0f, 0.0f, 0.0f, 1.0f};
 
 
@@ -204,7 +204,7 @@ float32_t kpd_M1_1[2] = {22.0f, 0.0f};
 float32_t kpd_M1_2[2] = {10.0f, 0.0f};
 float32_t kpd_M2_1[2] = {20.0f, 0.0f};
 float32_t kpd_M2_2[2] = {20.0f, 0.0f};
-float32_t kpd_M3_1[2] = {8.0f, 1.0f};
+float32_t kpd_M3_1[2] = {8.0f, 5.0f};
 float32_t kpd_M3_2[2] = {9.6f, 1.8f};
 float32_t kpd_M4_1[2] = {10.0f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
 float32_t kpd_M4_2[2] = {1.0f, 0.0f};
@@ -407,6 +407,7 @@ int main(void)
           Robot_Joint_Task_Service();
           Robot_Multi_IK_Service();
           Robot_Multi_IK_PD_Service();
+          Robot_Auto_Sequence_Service();
           PD_Test_Service();
           Multi_PD_Service();
           Transfer_Test_Service();
