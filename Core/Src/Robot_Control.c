@@ -15,6 +15,7 @@ uint32_t ptp_open_start_time = 0;     // For delay_us, micros
 #include <math.h>
 #include "PoE_Kinematics.h"
 #include "arm_math.h"
+#include "robot_uart_debug.h"
 #include "Custom_CLI.h"
 
 void Home_Stepper_Motor(Stepper_t *motor, uint8_t motor_id, uint8_t search_forward)
@@ -624,31 +625,69 @@ void Robot_Init_State(float32_t init_Angle[4])
 }
 
 // ==============================================================
-// AUTOMATED PICK SEQUENCE
+// AUTOMATED PICK-AND-PLACE SEQUENCE
 // ==============================================================
 #include "HW_EndEffector.h" // For Magnet_On/Off
 
 static Auto_Sequence_State_t auto_state = AUTO_STATE_IDLE;
 static float auto_angle = 0.0f;
-static float auto_x = 0.0f;
-static float auto_y = 0.0f;
+static float auto_pick_x = 0.0f;
+static float auto_pick_y = 0.0f;
+static float auto_place_x = 0.0f;
+static float auto_place_y = 0.0f;
+static uint8_t auto_has_place = 0; // 0 = pick-only (old command), 1 = full pick-and-place
 static uint32_t auto_delay_start = 0;
 
+// Original pick-only sequence (backwards compatible)
 void Robot_Start_Auto_Sequence(float angle, float x, float y) {
     if (auto_state != AUTO_STATE_IDLE) {
         UART_Printf("Error: Auto sequence already running.\r\n");
         return;
     }
     auto_angle = angle;
-    auto_x = x;
-    auto_y = y;
-    auto_state = AUTO_STATE_MOVE_XY;
+    auto_pick_x = x;
+    auto_pick_y = y;
+    auto_has_place = 0;
+    auto_state = AUTO_STATE_MOVE_XY_PICK;
     UART_Printf("\r\n[AUTO] Starting automated pick sequence...\r\n");
     
-    Magnet_On();
-    
     float32_t T_d[16];
-    Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.08, T_d);
+    Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.08f, T_d);
+    Robot_Set_IK_Target_PD(T_d, 1);
+}
+
+// Full pick-and-place sequence
+void Robot_Start_Auto_Pick_Place(float angle, float pick_x, float pick_y, float place_x, float place_y) {
+    if (auto_state != AUTO_STATE_IDLE) {
+        UART_Printf("Error: Auto sequence already running.\r\n");
+        return;
+    }
+    
+    UART_Printf("\r\n[AUTO] Starting automated pick-and-place sequence...\r\n");
+    UART_Printf("[AUTO] Pick: (%.4f, %.4f)  Place: (%.4f, %.4f)  Angle: %.1f deg\r\n",
+                pick_x, pick_y, place_x, place_y, angle);
+
+    // Pre-check: verify both coordinates are within reachable workspace
+    float pick_r  = sqrtf(pick_x * pick_x + pick_y * pick_y);
+    float place_r = sqrtf(place_x * place_x + place_y * place_y);
+    if (pick_r > 0.3501f || place_r > 0.3501f) {
+        UART_Printf("COOR_OUT_OF_REACH\r\n");
+        UART_Printf("[!] Pick r=%.4f Place r=%.4f (max 0.35m)\r\n", pick_r, place_r);
+        RobotUartDebug_ReportStatus(UART_STATUS_REJECTED);
+        return;
+    }
+    
+    auto_angle = angle;
+    auto_pick_x = pick_x;
+    auto_pick_y = pick_y;
+    auto_place_x = place_x;
+    auto_place_y = place_y;
+    auto_has_place = 1;
+    auto_state = AUTO_STATE_MOVE_XY_PICK;
+    
+    // Step 1: Move to pick position at z=0.08
+    float32_t T_d[16];
+    Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.08f, T_d);
     Robot_Set_IK_Target_PD(T_d, 1);
 }
 
@@ -661,20 +700,22 @@ void Robot_Auto_Sequence_Service(void) {
     }
 
     switch(auto_state) {
-        case AUTO_STATE_MOVE_XY:
+        // ==================== PICK PHASE ====================
+        case AUTO_STATE_MOVE_XY_PICK:
             if (!Robot_Is_Moving()) {
-                UART_Printf("[AUTO] Reached X,Y. Moving Z down...\r\n");
-                auto_state = AUTO_STATE_MOVE_Z_DOWN;
+                UART_Printf("[AUTO] Reached pick XY. Moving Z down to 0.015...\r\n");
+                auto_state = AUTO_STATE_MOVE_Z_DOWN_PICK;
                 
                 float32_t T_d[16];
-                Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.015f, T_d);
+                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.015f, T_d);
                 Robot_Set_IK_Target_PD(T_d, 1);
             }
             break;
             
-        case AUTO_STATE_MOVE_Z_DOWN:
+        case AUTO_STATE_MOVE_Z_DOWN_PICK:
             if (!Robot_Is_Moving()) {
-                UART_Printf("[AUTO] Reached Z down. Waiting for Limit 5 and 6...\r\n");
+                UART_Printf("[AUTO] Z down complete. Turning magnet ON. Waiting for Limit 5 & 6...\r\n");
+                Magnet_On();
                 auto_state = AUTO_STATE_WAIT_SWITCH;
             }
             break;
@@ -683,24 +724,91 @@ void Robot_Auto_Sequence_Service(void) {
             if (Limit5_IsTriggered() && Limit6_IsTriggered()) {
                 UART_Printf("[AUTO] Limit 5 & 6 triggered. Delaying 200ms...\r\n");
                 auto_delay_start = HAL_GetTick();
-                auto_state = AUTO_STATE_DELAY;
+                auto_state = AUTO_STATE_DELAY_PICK;
             }
             break;
             
-        case AUTO_STATE_DELAY:
+        case AUTO_STATE_DELAY_PICK:
             if (HAL_GetTick() - auto_delay_start >= 200) {
-                UART_Printf("[AUTO] Delay complete. Moving Z up...\r\n");
-                auto_state = AUTO_STATE_MOVE_Z_UP;
+                UART_Printf("[AUTO] Delay complete. Moving Z up to 0.08...\r\n");
+                RobotUartDebug_ReportStatus(UART_STATUS_PICKED);
+                auto_state = AUTO_STATE_MOVE_Z_UP_PICK;
                 
-                float32_t T_d[16];
-                Convert_PTP_to_Td(auto_angle, auto_x, auto_y, 0.08, T_d);
-                Robot_Set_IK_Target_PD(T_d, 1);
+                float32_t T_d2[16];
+                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.08f, T_d2);
+                Robot_Set_IK_Target_PD(T_d2, 1);
             }
             break;
             
-        case AUTO_STATE_MOVE_Z_UP:
+        case AUTO_STATE_MOVE_Z_UP_PICK:
             if (!Robot_Is_Moving()) {
-                UART_Printf("[AUTO] Z up complete. Sequence done.\r\n> ");
+                if (auto_has_place) {
+                    // Continue to place phase
+                    UART_Printf("[AUTO] Pick Z up complete. Moving to place XY (%.4f, %.4f)...\r\n",
+                                auto_place_x, auto_place_y);
+                    auto_state = AUTO_STATE_MOVE_XY_PLACE;
+                    
+                    float32_t T_d3[16];
+                    Convert_PTP_to_Td(auto_angle, auto_place_x, auto_place_y, 0.08f, T_d3);
+                    Robot_Set_IK_Target_PD(T_d3, 1);
+                } else {
+                    // Pick-only mode, done
+                    UART_Printf("[AUTO] Z up complete. Pick sequence done.\r\n> ");
+                    auto_state = AUTO_STATE_IDLE;
+                }
+            }
+            break;
+        
+        // ==================== PLACE PHASE ====================
+        case AUTO_STATE_MOVE_XY_PLACE:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Reached place XY. Moving Z down to 0.02...\r\n");
+                auto_state = AUTO_STATE_MOVE_Z_DOWN_PLACE;
+                
+                float32_t T_d4[16];
+                Convert_PTP_to_Td(auto_angle, auto_place_x, auto_place_y, 0.02f, T_d4);
+                Robot_Set_IK_Target_PD(T_d4, 1);
+            }
+            break;
+            
+        case AUTO_STATE_MOVE_Z_DOWN_PLACE:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Z down at place. Turning magnet OFF...\r\n");
+                Magnet_Off();
+                auto_state = AUTO_STATE_MAGNET_OFF;
+            }
+            break;
+        
+        case AUTO_STATE_MAGNET_OFF:
+        {
+            // Move Z up immediately after magnet off
+            UART_Printf("[AUTO] Moving Z up to 0.08...\r\n");
+            RobotUartDebug_ReportStatus(UART_STATUS_PLACED);
+            auto_state = AUTO_STATE_MOVE_Z_UP_PLACE;
+            
+            float32_t T_d5[16];
+            Convert_PTP_to_Td(auto_angle, auto_place_x, auto_place_y, 0.08f, T_d5);
+            Robot_Set_IK_Target_PD(T_d5, 1);
+            break;
+        }
+            
+        case AUTO_STATE_MOVE_Z_UP_PLACE:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Place Z up complete. Returning to home position...\r\n");
+                auto_state = AUTO_STATE_MOVE_HOME;
+                
+                // Move all motors to angle 0 -> this is the home (encoder 0) position
+                float32_t target_abs_deg[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                extern void Multi_PD_Start(float32_t target_abs_deg[4], uint8_t param_idx);
+                Multi_PD_Start(target_abs_deg, 1);
+            }
+            break;
+        
+        // ==================== RETURN HOME ====================
+        case AUTO_STATE_MOVE_HOME:
+            if (!Robot_Is_Moving()) {
+                UART_Printf("[AUTO] Home reached. Pick-and-place sequence complete!\r\n> ");
+                RobotUartDebug_ReportStatus(UART_STATUS_DONE);
                 auto_state = AUTO_STATE_IDLE;
             }
             break;

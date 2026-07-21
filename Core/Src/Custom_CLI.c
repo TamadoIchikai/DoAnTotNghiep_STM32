@@ -14,7 +14,6 @@
 #include <stdlib.h> // For atoi
 #include <ctype.h>  // For tolower
 #include <stdarg.h>
-#include <stdio.h>
 #include "PoE_Kinematics.h"
 #include "Custom_CLI.h"
 #include "Custom_utils.h"
@@ -59,6 +58,12 @@ void UART_TX_Service(void) {
         huart2.Instance->DR = tx_buf[tx_tail];
         tx_tail = (tx_tail + 1) % TX_BUF_SIZE;
     }
+}
+
+// Redirect standard printf to the UART ring buffer
+int __io_putchar(int ch) {
+    UART_PutChar((char)ch);
+    return ch;
 }
 
 void UART_PutString(const char* str) {
@@ -405,13 +410,41 @@ void Process_Command(char *cmd)
 
     if (strncmp(cmd, "auto_con_1_mag_on_", 18) == 0) {
         float angle = 0.0f;
-        float x = 0.0f;
-        float y = 0.0f;
-
-        if (sscanf(cmd, "auto_con_1_mag_on_%f_%f_%f", &angle, &x, &y) == 3) {
-            Robot_Start_Auto_Sequence(angle, x, y);
+        float pick_x = 0.0f, pick_y = 0.0f;
+        float place_x = 0.0f, place_y = 0.0f;
+        
+        // Check if this is a pick-and-place command (contains "_mag_off_")
+        const char *mag_off_ptr = strstr(cmd + 18, "_mag_off_");
+        
+        if (mag_off_ptr != NULL) {
+            // Full pick-and-place: auto_con_1_mag_on_<angle>_<x>_<y>_mag_off_<x>_<y>[_mm]
+            if (sscanf(cmd, "auto_con_1_mag_on_%f_%f_%f", &angle, &pick_x, &pick_y) != 3) {
+                UART_Printf("Format: auto_con_1_mag_on_<angle>_<pickX>_<pickY>_mag_off_<placeX>_<placeY>[_mm]\r\n");
+                return;
+            }
+            if (sscanf(mag_off_ptr, "_mag_off_%f_%f", &place_x, &place_y) != 2) {
+                UART_Printf("Format: auto_con_1_mag_on_<angle>_<pickX>_<pickY>_mag_off_<placeX>_<placeY>[_mm]\r\n");
+                return;
+            }
+            
+            // Check for _mm suffix -> convert mm to meters
+            size_t cmd_len = strlen(cmd);
+            if (cmd_len >= 3 && strcmp(cmd + cmd_len - 3, "_mm") == 0) {
+                pick_x  /= 1000.0f;
+                pick_y  /= 1000.0f;
+                place_x /= 1000.0f;
+                place_y /= 1000.0f;
+                UART_Printf("[AUTO] Unit: mm -> converted to meters\r\n");
+            }
+            
+            Robot_Start_Auto_Pick_Place(angle, pick_x, pick_y, place_x, place_y);
         } else {
-            UART_Printf("Format: auto_con_1_mag_on_<angle>_<X>_<Y>\r\n");
+            // Pick-only: auto_con_1_mag_on_<angle>_<x>_<y>
+            if (sscanf(cmd, "auto_con_1_mag_on_%f_%f_%f", &angle, &pick_x, &pick_y) == 3) {
+                Robot_Start_Auto_Sequence(angle, pick_x, pick_y);
+            } else {
+                UART_Printf("Format: auto_con_1_mag_on_<angle>_<X>_<Y>\r\n");
+            }
         }
         return;
     }
@@ -668,6 +701,7 @@ void UART_Command_Service(void)
     while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
     {
         ch = (uint8_t)(huart2.Instance->DR & 0xFF);
+
         // 1. Universal Stop detection
         if (ch == 'x' || ch == 'X') {
             x_count++;

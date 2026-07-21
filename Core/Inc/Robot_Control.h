@@ -34,15 +34,24 @@ void Robot_Multi_IK_PD_Service(void);
 
 typedef enum {
     AUTO_STATE_IDLE = 0,
-    AUTO_STATE_MOVE_XY,
-    AUTO_STATE_MOVE_Z_DOWN,
+    // Pick phase
+    AUTO_STATE_MOVE_XY_PICK,
+    AUTO_STATE_MOVE_Z_DOWN_PICK,
     AUTO_STATE_WAIT_SWITCH,
-    AUTO_STATE_DELAY,
-    AUTO_STATE_MOVE_Z_UP,
+    AUTO_STATE_DELAY_PICK,
+    AUTO_STATE_MOVE_Z_UP_PICK,
+    // Place phase
+    AUTO_STATE_MOVE_XY_PLACE,
+    AUTO_STATE_MOVE_Z_DOWN_PLACE,
+    AUTO_STATE_MAGNET_OFF,
+    AUTO_STATE_MOVE_Z_UP_PLACE,
+    // Return home
+    AUTO_STATE_MOVE_HOME,
     AUTO_STATE_DONE
 } Auto_Sequence_State_t;
 
 void Robot_Start_Auto_Sequence(float angle, float x, float y);
+void Robot_Start_Auto_Pick_Place(float angle, float pick_x, float pick_y, float place_x, float place_y);
 void Robot_Auto_Sequence_Service(void);
 
 #endif /* INC_ROBOT_CONTROL_H_ */

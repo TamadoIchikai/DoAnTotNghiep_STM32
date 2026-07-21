@@ -42,6 +42,7 @@
 #include "PoE_helper.h"
 #include "PoE_Kinematics.h"
 #include "Controllers.h"
+#include "robot_uart_debug.h"
 
 /* USER CODE END Includes */
 
@@ -67,6 +68,7 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim12;
 TIM_HandleTypeDef htim6;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -218,6 +220,7 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM12_Init(void);
+static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
@@ -345,6 +348,7 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   MX_TIM12_Init();
+  MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   DWT_Delay_Init();
@@ -386,6 +390,13 @@ int main(void)
 
   Robot_Init_State(robot_Init_Angle);
 
+  RobotUartDebug_Init(&huart1);
+
+  // Enable USART1 interrupt for binary protocol RX
+  HAL_NVIC_SetPriority(USART1_IRQn, 3, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+  RobotUartDebug_StartReceive();
+
   Print_Help();
   Print_Status();
 
@@ -405,13 +416,14 @@ int main(void)
           Software_Limit_Service();
           Encoder_Stall_Service();
           Robot_Joint_Task_Service();
-          Robot_Multi_IK_Service();
+//          Robot_Multi_IK_Service();
           Robot_Multi_IK_PD_Service();
           Robot_Auto_Sequence_Service();
-          PD_Test_Service();
+//          PD_Test_Service();
           Multi_PD_Service();
-          Transfer_Test_Service();
+//          Transfer_Test_Service();
           Matlab_PID_Test_Service();
+          RobotUartDebug_Process(); // Process binary protocol events
 
           UART_TX_Service();
 
@@ -660,6 +672,39 @@ static void MX_TIM12_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -782,6 +827,11 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    RobotUartDebug_UART_RxCpltCallback(huart);
+}
 
 /* USER CODE END 4 */
 
