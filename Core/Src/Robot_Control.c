@@ -707,7 +707,7 @@ void Robot_Auto_Sequence_Service(void) {
                 auto_state = AUTO_STATE_MOVE_Z_DOWN_PICK;
                 
                 float32_t T_d[16];
-                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.015f, T_d);
+                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.021f, T_d);
                 Robot_Set_IK_Target_PD(T_d, 1);
             }
             break;
@@ -766,7 +766,7 @@ void Robot_Auto_Sequence_Service(void) {
                 auto_state = AUTO_STATE_MOVE_Z_DOWN_PLACE;
                 
                 float32_t T_d4[16];
-                Convert_PTP_to_Td(auto_angle, auto_place_x, auto_place_y, 0.02f, T_d4);
+                Convert_PTP_to_Td(auto_angle, auto_place_x, auto_place_y, 0.025f, T_d4);
                 Robot_Set_IK_Target_PD(T_d4, 1);
             }
             break;
