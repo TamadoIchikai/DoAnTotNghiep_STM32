@@ -382,7 +382,7 @@ void Robot_Joint_Task_Service(void) {
 
             extern float32_t ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D;
             
-            UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
+            UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f, 0,0,0,0, 0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0\r\n",
                         HAL_GetTick() - ptp_open_start_time, ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D,
                         x, y, z, angle_Out);
         }
@@ -707,7 +707,7 @@ void Robot_Auto_Sequence_Service(void) {
                 auto_state = AUTO_STATE_MOVE_Z_DOWN_PICK;
                 
                 float32_t T_d[16];
-                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.021f, T_d);
+                Convert_PTP_to_Td(auto_angle, auto_pick_x, auto_pick_y, 0.011f, T_d);
                 Robot_Set_IK_Target_PD(T_d, 1);
             }
             break;

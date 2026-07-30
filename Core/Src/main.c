@@ -208,7 +208,7 @@ float32_t kpd_M2_1[2] = {20.0f, 0.0f};
 float32_t kpd_M2_2[2] = {20.0f, 0.0f};
 float32_t kpd_M3_1[2] = {8.0f, 5.0f};
 float32_t kpd_M3_2[2] = {9.6f, 1.8f};
-float32_t kpd_M4_1[2] = {10.0f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
+float32_t kpd_M4_1[2] = {8.0f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
 float32_t kpd_M4_2[2] = {1.0f, 0.0f};
 
 /* USER CODE END PV */

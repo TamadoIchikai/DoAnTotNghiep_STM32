@@ -255,6 +255,7 @@ void Multi_PD_Service(void) {
     float32_t errors[4] = {0};
     uint32_t ctrl_signals[4] = {0};
     float32_t velocities[4] = {0};
+    float32_t raw_velocities[4] = {0};
 
     static int32_t prev_enc[4] = {0};
     static float32_t filtered_vels[4] = {0};
@@ -277,8 +278,9 @@ void Multi_PD_Service(void) {
         uint32_t enc_ppr_val = (i == 2) ? 11 : ENCODER_PPR;
         current_angles[i] = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG); // Kept ENCODER_PPR for angle for backwards compatibility
         
+        raw_velocities[i] = Encoder_To_Velocity(enc_pos_val, prev_enc[i], delta_t, enc_ppr_val, UNIT_DEG);
         if (elapsed_time < 15) {
-            velocities[i] = Encoder_To_Velocity(enc_pos_val, prev_enc[i], delta_t, enc_ppr_val, UNIT_DEG);
+            velocities[i] = raw_velocities[i];
             filtered_vels[i] = velocities[i];
         } else {
             velocities[i] = Encoder_To_Velocity_Smoothed(enc_pos_val, prev_enc[i], delta_t, enc_ppr_val, UNIT_DEG, &filtered_vels[i]);
@@ -349,16 +351,19 @@ void Multi_PD_Service(void) {
 
     // 3. Print Telemetry
     if (PTP_RUN_CON_FLAG) {
-        UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
+        UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f, %lu,%lu,%lu,%lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
                     elapsed_time, ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D,
-                    x, y, z, angle_Out);
+                    x, y, z, angle_Out,
+                    ctrl_signals[0], ctrl_signals[1], ctrl_signals[2], ctrl_signals[3],
+                    raw_velocities[0], raw_velocities[1], raw_velocities[2], raw_velocities[3],
+                    velocities[0], velocities[1], velocities[2], velocities[3]);
     } else {
-        UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%lu\r\n",
+        UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu\r\n",
                     elapsed_time, x, y, z,
-                    multi_pd_state[0].target_deg, current_angles[0], velocities[0], ctrl_signals[0],
-                    multi_pd_state[1].target_deg, current_angles[1], velocities[1], ctrl_signals[1],
-                    multi_pd_state[2].target_deg, current_angles[2], velocities[2], ctrl_signals[2],
-                    multi_pd_state[3].target_deg, current_angles[3], velocities[3], ctrl_signals[3]);
+                    multi_pd_state[0].target_deg, current_angles[0], raw_velocities[0], velocities[0], ctrl_signals[0],
+                    multi_pd_state[1].target_deg, current_angles[1], raw_velocities[1], velocities[1], ctrl_signals[1],
+                    multi_pd_state[2].target_deg, current_angles[2], raw_velocities[2], velocities[2], ctrl_signals[2],
+                    multi_pd_state[3].target_deg, current_angles[3], raw_velocities[3], velocities[3], ctrl_signals[3]);
     }
 
     if (all_reached) {
