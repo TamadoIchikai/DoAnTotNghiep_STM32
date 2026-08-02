@@ -62,13 +62,17 @@ recording = false;
 time_ms = [];
 X = []; Y = []; Z = [];
 ref1 = []; enc1 = []; vel1 = []; u1 = [];
-ref2 = []; enc2 = []; vel2 = []; u2 = [];
-ref3 = []; enc3 = []; vel3 = []; u3 = [];
-ref4 = []; enc4 = []; vel4 = []; u4 = [];
+ref1 = []; enc1 = []; vel_raw1 = []; vel_sm1 = []; u1 = [];
+ref2 = []; enc2 = []; vel_raw2 = []; vel_sm2 = []; u2 = [];
+ref3 = []; enc3 = []; vel_raw3 = []; vel_sm3 = []; u3 = [];
+ref4 = []; enc4 = []; vel_raw4 = []; vel_sm4 = []; u4 = [];
 
 % PTP Arrays
 x_D = []; y_D = []; z_D = []; angle_D = [];
 x_Out = []; y_Out = []; z_Out = []; angle_Out = [];
+u1_ptp = []; u2_ptp = []; u3_ptp = []; u4_ptp = [];
+vel_raw1 = []; vel_raw2 = []; vel_raw3 = []; vel_raw4 = [];
+vel_sm1 = []; vel_sm2 = []; vel_sm3 = []; vel_sm4 = [];
 
 % Keep track of where each point's trajectory begins
 segment_starts = []; 
@@ -101,21 +105,21 @@ while toc < max_wait_time
             
         elseif startsWith(line_str, '[MPD_DATA]') && recording && ~is_ptp_cmd
             parts = split(strrep(line_str, '[MPD_DATA] ', ''), ',');
-            if length(parts) == 20
+            if length(parts) == 24
                 time_ms(end+1) = str2double(parts{1});
                 X(end+1) = str2double(parts{2});
                 Y(end+1) = str2double(parts{3});
                 Z(end+1) = str2double(parts{4});
                 
-                ref1(end+1) = str2double(parts{5}); enc1(end+1) = str2double(parts{6}); vel1(end+1) = str2double(parts{7}); u1(end+1) = str2double(parts{8});
-                ref2(end+1) = str2double(parts{9}); enc2(end+1) = str2double(parts{10}); vel2(end+1) = str2double(parts{11}); u2(end+1) = str2double(parts{12});
-                ref3(end+1) = str2double(parts{13}); enc3(end+1) = str2double(parts{14}); vel3(end+1) = str2double(parts{15}); u3(end+1) = str2double(parts{16});
-                ref4(end+1) = str2double(parts{17}); enc4(end+1) = str2double(parts{18}); vel4(end+1) = str2double(parts{19}); u4(end+1) = str2double(parts{20});
+                ref1(end+1) = str2double(parts{5}); enc1(end+1) = str2double(parts{6}); vel_raw1(end+1) = str2double(parts{7}); vel_sm1(end+1) = str2double(parts{8}); u1(end+1) = str2double(parts{9});
+                ref2(end+1) = str2double(parts{10}); enc2(end+1) = str2double(parts{11}); vel_raw2(end+1) = str2double(parts{12}); vel_sm2(end+1) = str2double(parts{13}); u2(end+1) = str2double(parts{14});
+                ref3(end+1) = str2double(parts{15}); enc3(end+1) = str2double(parts{16}); vel_raw3(end+1) = str2double(parts{17}); vel_sm3(end+1) = str2double(parts{18}); u3(end+1) = str2double(parts{19});
+                ref4(end+1) = str2double(parts{20}); enc4(end+1) = str2double(parts{21}); vel_raw4(end+1) = str2double(parts{22}); vel_sm4(end+1) = str2double(parts{23}); u4(end+1) = str2double(parts{24});
             end
             
         elseif startsWith(line_str, '[PTP_DATA]') && recording && is_ptp_cmd
             parts = split(strrep(line_str, '[PTP_DATA] ', ''), ',');
-            if length(parts) == 9
+            if length(parts) == 21
                 time_ms(end+1) = str2double(parts{1});
                 x_D(end+1) = str2double(parts{2});
                 y_D(end+1) = str2double(parts{3});
@@ -125,6 +129,18 @@ while toc < max_wait_time
                 y_Out(end+1) = str2double(parts{7});
                 z_Out(end+1) = str2double(parts{8});
                 angle_Out(end+1) = str2double(parts{9});
+                u1_ptp(end+1) = str2double(parts{10});
+                u2_ptp(end+1) = str2double(parts{11});
+                u3_ptp(end+1) = str2double(parts{12});
+                u4_ptp(end+1) = str2double(parts{13});
+                vel_raw1(end+1) = str2double(parts{14});
+                vel_raw2(end+1) = str2double(parts{15});
+                vel_raw3(end+1) = str2double(parts{16});
+                vel_raw4(end+1) = str2double(parts{17});
+                vel_sm1(end+1) = str2double(parts{18});
+                vel_sm2(end+1) = str2double(parts{19});
+                vel_sm3(end+1) = str2double(parts{20});
+                vel_sm4(end+1) = str2double(parts{21});
             end
             
         elseif startsWith(line_str, '[MPD_END]')
@@ -167,7 +183,10 @@ end
 
 if is_ptp_cmd
     T = table(time_ms', x_D', y_D', z_D', angle_D', x_Out', y_Out', z_Out', angle_Out', ...
-        'VariableNames', {'Time_ms', 'x_D', 'y_D', 'z_D', 'angle_D', 'x_Out', 'y_Out', 'z_Out', 'angle_Out'});
+        u1_ptp', u2_ptp', u3_ptp', u4_ptp', ...
+        vel_raw1', vel_raw2', vel_raw3', vel_raw4', ...
+        vel_sm1', vel_sm2', vel_sm3', vel_sm4', ...
+        'VariableNames', {'Time_ms', 'x_D', 'y_D', 'z_D', 'angle_D', 'x_Out', 'y_Out', 'z_Out', 'angle_Out', 'u1', 'u2', 'u3', 'u4', 'vel_raw1', 'vel_raw2', 'vel_raw3', 'vel_raw4', 'vel_sm1', 'vel_sm2', 'vel_sm3', 'vel_sm4'});
     writetable(T, filepath);
     disp(['PTP Data saved successfully to: ', filepath]);
 
@@ -228,13 +247,59 @@ if is_ptp_cmd
     plot(time_s, err_angle, 'k-', 'LineWidth', 1.5);
     title('Angle Error'); xlabel('Time (s)'); ylabel('Error Angle (deg)'); grid on;
 
+    % 9. Control Signals
+    figure('Name', 'PTP Control Signals', 'Color', 'w', 'Position', [150, 150, 1200, 800]);
+
+    subplot(4, 1, 1);
+    plot(time_s, u1_ptp, 'm-', 'LineWidth', 1.5);
+    title('Motor 1 (Base) Control Signal'); xlabel('Time (s)'); ylabel('Interval (\mu s)'); grid on;
+
+    subplot(4, 1, 2);
+    plot(time_s, u2_ptp, 'm-', 'LineWidth', 1.5);
+    title('Motor 2 (Elbow) Control Signal'); xlabel('Time (s)'); ylabel('Interval (\mu s)'); grid on;
+
+    subplot(4, 1, 3);
+    plot(time_s, u3_ptp, 'm-', 'LineWidth', 1.5);
+    title('Motor 3 (Z-Axis) Control Signal'); xlabel('Time (s)'); ylabel('PWM (0-999)'); grid on;
+
+    subplot(4, 1, 4);
+    plot(time_s, u4_ptp, 'm-', 'LineWidth', 1.5);
+    title('Motor 4 (End Effector) Control Signal'); xlabel('Time (s)'); ylabel('Interval (\mu s)'); grid on;
+
+    % 10. Velocities
+    figure('Name', 'PTP Velocities', 'Color', 'w', 'Position', [200, 200, 1200, 800]);
+
+    subplot(4, 1, 1);
+    plot(time_s, vel_raw1, 'c-', 'LineWidth', 1); hold on;
+    plot(time_s, vel_sm1, 'b-', 'LineWidth', 1.5);
+    title('Motor 1 Velocity'); xlabel('Time (s)'); ylabel('deg/s'); grid on; legend('Raw', 'Smooth');
+
+    subplot(4, 1, 2);
+    plot(time_s, vel_raw2, 'c-', 'LineWidth', 1); hold on;
+    plot(time_s, vel_sm2, 'b-', 'LineWidth', 1.5);
+    title('Motor 2 Velocity'); xlabel('Time (s)'); ylabel('deg/s'); grid on; legend('Raw', 'Smooth');
+
+    subplot(4, 1, 3);
+    plot(time_s, vel_raw3, 'c-', 'LineWidth', 1); hold on;
+    plot(time_s, vel_sm3, 'b-', 'LineWidth', 1.5);
+    title('Motor 3 Velocity'); xlabel('Time (s)'); ylabel('deg/s'); grid on; legend('Raw', 'Smooth');
+
+    subplot(4, 1, 4);
+    plot(time_s, vel_raw4, 'c-', 'LineWidth', 1); hold on;
+    plot(time_s, vel_sm4, 'b-', 'LineWidth', 1.5);
+    title('Motor 4 Velocity'); xlabel('Time (s)'); ylabel('deg/s'); grid on; legend('Raw', 'Smooth');
+
 else
     T = table(time_ms', X', Y', Z', ...
-        ref1', enc1', vel1', u1', ref2', enc2', vel2', u2', ...
-        ref3', enc3', vel3', u3', ref4', enc4', vel4', u4', ...
+        ref1', enc1', vel_raw1', vel_sm1', u1', ...
+        ref2', enc2', vel_raw2', vel_sm2', u2', ...
+        ref3', enc3', vel_raw3', vel_sm3', u3', ...
+        ref4', enc4', vel_raw4', vel_sm4', u4', ...
         'VariableNames', {'Time_ms', 'X', 'Y', 'Z', ...
-        'Ref1', 'Enc1', 'Vel1', 'U1', 'Ref2', 'Enc2', 'Vel2', 'U2', ...
-        'Ref3', 'Enc3', 'Vel3', 'U3', 'Ref4', 'Enc4', 'Vel4', 'U4'});
+        'Ref1', 'Enc1', 'Vel_raw1', 'Vel_sm1', 'U1', ...
+        'Ref2', 'Enc2', 'Vel_raw2', 'Vel_sm2', 'U2', ...
+        'Ref3', 'Enc3', 'Vel_raw3', 'Vel_sm3', 'U3', ...
+        'Ref4', 'Enc4', 'Vel_raw4', 'Vel_sm4', 'U4'});
     writetable(T, filepath);
     disp(['Data saved successfully to: ', filepath]);
 
@@ -264,10 +329,10 @@ else
     figure('Name', 'Multi-Motor IK PD Trajectory', 'Color', 'w', 'Position', [100, 100, 1200, 800]);
 
     % Pass continuous_time instead of time_ms
-    plot_motor(1, continuous_time, ref1, enc1, vel1, u1, 'Motor 1 (Base)', 'Interval (\mu s)', segment_starts, colors);
-    plot_motor(4, continuous_time, ref2, enc2, vel2, u2, 'Motor 2 (Elbow)', 'Interval (\mu s)', segment_starts, colors);
-    plot_motor(7, continuous_time, ref3, enc3, vel3, u3, 'Motor 3 (Z-Axis)', 'PWM (0-999)', segment_starts, colors);
-    plot_motor(10, continuous_time, ref4, enc4, vel4, u4, 'Motor 4 (End Effector)', 'Interval (\mu s)', segment_starts, colors);
+    plot_motor(1, continuous_time, ref1, enc1, vel_raw1, vel_sm1, u1, 'Motor 1 (Base)', 'Interval (\mu s)', segment_starts, colors);
+    plot_motor(4, continuous_time, ref2, enc2, vel_raw2, vel_sm2, u2, 'Motor 2 (Elbow)', 'Interval (\mu s)', segment_starts, colors);
+    plot_motor(7, continuous_time, ref3, enc3, vel_raw3, vel_sm3, u3, 'Motor 3 (Z-Axis)', 'PWM (0-999)', segment_starts, colors);
+    plot_motor(10, continuous_time, ref4, enc4, vel_raw4, vel_sm4, u4, 'Motor 4 (End Effector)', 'Interval (\mu s)', segment_starts, colors);
 
     % 3D Trajectory Plot
     figure('Name', 'End-Effector Trajectory', 'Color', 'w');
@@ -299,7 +364,7 @@ else
 end
 
 % Helper function for segmented motor subplot
-function plot_motor(subplot_idx, time, ref, enc, vel, u, title_str, u_label, segment_starts, colors)
+function plot_motor(subplot_idx, time, ref, enc, vel_raw, vel_sm, u, title_str, u_label, segment_starts, colors)
     num_segments = length(segment_starts);
     leg_entries = {};
     
@@ -330,7 +395,8 @@ function plot_motor(subplot_idx, time, ref, enc, vel, u, title_str, u_label, seg
         idx_start = segment_starts(i);
         idx_end = (i < num_segments) * (segment_starts(min(i+1, num_segments)) - 1) + (i == num_segments) * length(time);
         if idx_end >= idx_start
-            plot(time(idx_start:idx_end), vel(idx_start:idx_end), '-', 'LineWidth', 1.5, 'Color', colors(i,:));
+            plot(time(idx_start:idx_end), vel_raw(idx_start:idx_end), 'c-', 'LineWidth', 1, 'Color', colors(i,:)*0.5 + [0.5 0.5 0.5]);
+            plot(time(idx_start:idx_end), vel_sm(idx_start:idx_end), '-', 'LineWidth', 1.5, 'Color', colors(i,:));
         end
     end
     
