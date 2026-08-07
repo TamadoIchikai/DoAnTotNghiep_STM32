@@ -35,7 +35,7 @@ extern uint8_t g_dc_running;
 extern uint8_t g_dc_forward;
 
 // --- TX Ring Buffer ---
-#define TX_BUF_SIZE 512
+#define TX_BUF_SIZE 2048
 static volatile uint8_t tx_buf[TX_BUF_SIZE];
 static volatile uint16_t tx_head = 0;
 static volatile uint16_t tx_tail = 0;
@@ -763,7 +763,7 @@ void UART_Command_Service(void)
 
 void UART_Printf(const char *fmt, ...)
 {
-    char buffer[280];
+    char buffer[512];
 
     va_list args;
     va_start(args, fmt);

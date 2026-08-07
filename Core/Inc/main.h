@@ -49,8 +49,8 @@ extern float g_vel_filter_alpha;
 /* USER CODE BEGIN EC */
 #define M1_Err_Min 0.3f // 1600 PPR = 0.225 deg/step, must be > 0.225
 #define M2_Err_Min 0.3f // 1600 PPR = 0.225 deg/step, must be > 0.225
-#define M3_Err_Min 2.0f // DC motor with Kp=9.6 needs >1.04 deg to overcome 10 PWM friction deadband
-#define M4_Err_Min 1.0f // 800 PPR = 0.45 deg/step, must be > 0.45
+#define M3_Err_Min 4.0f // DC motor with Kp=9.6 needs >1.04 deg to overcome 10 PWM friction deadband
+#define M4_Err_Min 2.5f // 800 PPR = 0.45 deg/step, must be > 0.45
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/

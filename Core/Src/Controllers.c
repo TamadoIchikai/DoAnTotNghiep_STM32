@@ -7,7 +7,8 @@
 #include "Controllers.h"
 #include <math.h>
 
-// Stepper PD calculation
+
+// ORIGINAL STEPPER PD (WITH SLEW RATE AND DEADBAND)
 uint32_t PD_Stepper_Compute(float Kp, float Kd, float error, float *prev_error, float *prev_u, uint32_t pulses_per_rev, uint8_t *dir, float min_error) {
 	if (fabsf(error) < min_error) // Use min_error for positional deadband
 	{
@@ -66,7 +67,45 @@ uint32_t PD_Stepper_Compute(float Kp, float Kd, float error, float *prev_error, 
     return (uint32_t)interval;
 }
 
-// DC Motor PD calculation
+
+//// ZIEGLER-NICHOLS TUNING STEPPER PD (NO SLEW RATE, NO DEADBAND)
+//uint32_t PD_Stepper_Compute(float Kp, float Kd, float error, float *prev_error, float *prev_u, uint32_t pulses_per_rev, uint8_t *dir, float min_error) {
+//    // No error deadband for tuning
+//	if (fabsf(error) < 0.04) // Use min_error for positional deadband
+//	{
+//		error = 0.0f;
+//	}
+//    float de = error - *prev_error;
+//    float u = Kp * error + Kd * de;
+//    *prev_error = error;
+//
+//    *prev_u = u; // Keep updating prev_u in case it's needed elsewhere
+//
+//    if (u > 0) {
+//        *dir = 1;
+//    } else {
+//        *dir = 0;
+//    }
+//
+//    float abs_u = fabsf(u);
+//
+//    // We MUST have a check to return 0 when u is zero, otherwise division by zero below gives Infinity
+//    if (abs_u < 0.01f) {
+//        return 0; // 0 means stopped
+//    }
+//
+//    // Convert velocity u [deg/s] to interval [us]
+//    float interval = (360.0f * 1000000.0f) / (abs_u * (float)pulses_per_rev);
+//
+//    if (interval > 10000.0f) return 10000;
+//    if (interval < 200.0f) return 200; // Max speed limit
+//
+//    return (uint32_t)interval;
+//}
+
+
+
+// ORIGINAL DC PD (WITH SLEW RATE AND DEADBAND)
 // Returns PWM (0-1000), sets *dir
 uint16_t PD_DC_Compute(float Kp, float Kd, float error, float *prev_error, float *prev_u, uint8_t *dir, float min_error) {
     if (fabsf(error) < min_error) {
@@ -110,4 +149,32 @@ uint16_t PD_DC_Compute(float Kp, float Kd, float error, float *prev_error, float
     return (uint16_t)abs_u;
 }
 
+
+//// ZIEGLER-NICHOLS TUNING DC PD (NO SLEW RATE, NO DEADBAND)
+//uint16_t PD_DC_Compute(float Kp, float Kd, float error, float *prev_error, float *prev_u, uint8_t *dir, float min_error) {
+//    // No error deadband for tuning
+//
+//    float de = error - *prev_error;
+//    float u = Kp * error + Kd * de;
+//    *prev_error = error;
+//
+//    *prev_u = u; // Keep updating prev_u in case it's needed elsewhere
+//
+//    if (u > 0) {
+//        *dir = 1;
+//    } else {
+//        *dir = 0;
+//    }
+//
+//    float abs_u = fabsf(u);
+//
+//    // Minimum PWM deadband to overcome friction
+//    if (abs_u < 10.0f) {
+//        return 0;
+//    }
+//    if (abs_u > 255.0f) abs_u = 255.0f; // clamp to max PWM
+//
+//    return (uint16_t)abs_u;
+//}
+//
 

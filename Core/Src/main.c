@@ -158,7 +158,7 @@ volatile int32_t enc4_pos = 0;
 float32_t M1_Lim_Deg = 180.0f;
 float32_t M2_Lim_Deg = 200.0f;
 float32_t M3_Lim_Deg = 180.0f;
-float32_t M4_Lim_mm  = 90.0f;
+float32_t M4_Lim_mm  = 95.0f;
 float32_t M4_Pulley_Linear_Dia = 13.0f;
 
 float32_t robot_Init_Angle[4] = {-15.0f,38.0f,0.0f,-10.0f};
@@ -208,7 +208,7 @@ float32_t kpd_M2_1[2] = {20.0f, 0.0f};
 float32_t kpd_M2_2[2] = {20.0f, 0.0f};
 float32_t kpd_M3_1[2] = {8.0f, 5.0f};
 float32_t kpd_M3_2[2] = {9.6f, 1.8f};
-float32_t kpd_M4_1[2] = {8.0f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
+float32_t kpd_M4_1[2] = {4.5f, 0.0f}; // Reduced from 15.0 to 10.0 to prevent oscillation
 float32_t kpd_M4_2[2] = {1.0f, 0.0f};
 
 /* USER CODE END PV */
@@ -419,9 +419,9 @@ int main(void)
 //          Robot_Multi_IK_Service();
           Robot_Multi_IK_PD_Service();
           Robot_Auto_Sequence_Service();
-//          PD_Test_Service();
+          PD_Test_Service();
           Multi_PD_Service();
-//          Transfer_Test_Service();
+          Transfer_Test_Service();
           Matlab_PID_Test_Service();
           RobotUartDebug_Process(); // Process binary protocol events
 

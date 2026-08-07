@@ -351,19 +351,26 @@ void Multi_PD_Service(void) {
 
     // 3. Print Telemetry
     if (PTP_RUN_CON_FLAG) {
-        UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f, %lu,%lu,%lu,%lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f\r\n",
+        float32_t ref4_disp_mm = Angle_To_Distance(multi_pd_state[3].target_deg, M4_Pulley_Linear_Dia, UNIT_DEG);
+        float32_t enc4_disp_mm = Angle_To_Distance(current_angles[3], M4_Pulley_Linear_Dia, UNIT_DEG);
+        UART_Printf("[PTP_DATA] %lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f, %lu,%lu,%lu,%lu, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f,%.4f\r\n",
                     elapsed_time, ptp_pos_D_x, ptp_pos_D_y, ptp_pos_D_z, ptp_angle_D,
                     x, y, z, angle_Out,
                     ctrl_signals[0], ctrl_signals[1], ctrl_signals[2], ctrl_signals[3],
                     raw_velocities[0], raw_velocities[1], raw_velocities[2], raw_velocities[3],
-                    velocities[0], velocities[1], velocities[2], velocities[3]);
+                    velocities[0], velocities[1], velocities[2], velocities[3],
+                    multi_pd_state[0].target_deg, multi_pd_state[1].target_deg, multi_pd_state[2].target_deg, multi_pd_state[3].target_deg, ref4_disp_mm,
+                    current_angles[0], current_angles[1], current_angles[2], current_angles[3], enc4_disp_mm);
     } else {
-        UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu\r\n",
+        float32_t ref4_disp_mm = Angle_To_Distance(multi_pd_state[3].target_deg, M4_Pulley_Linear_Dia, UNIT_DEG);
+        float32_t enc4_disp_mm = Angle_To_Distance(current_angles[3], M4_Pulley_Linear_Dia, UNIT_DEG);
+        UART_Printf("[MPD_DATA] %lu, %.4f,%.4f,%.4f, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f,%.4f,%.4f,%lu, %.4f,%.4f\r\n",
                     elapsed_time, x, y, z,
                     multi_pd_state[0].target_deg, current_angles[0], raw_velocities[0], velocities[0], ctrl_signals[0],
                     multi_pd_state[1].target_deg, current_angles[1], raw_velocities[1], velocities[1], ctrl_signals[1],
                     multi_pd_state[2].target_deg, current_angles[2], raw_velocities[2], velocities[2], ctrl_signals[2],
-                    multi_pd_state[3].target_deg, current_angles[3], raw_velocities[3], velocities[3], ctrl_signals[3]);
+                    multi_pd_state[3].target_deg, current_angles[3], raw_velocities[3], velocities[3], ctrl_signals[3],
+                    ref4_disp_mm, enc4_disp_mm);
     }
 
     if (all_reached) {
@@ -489,6 +496,7 @@ void Transfer_Test_Service(void) {
 struct {
     uint8_t active;
     uint8_t motor_id;
+    float start_deg;
     float target_deg;
     float Kp;
     float Kd;
@@ -504,7 +512,7 @@ uint8_t Is_Logging_Active(void) {
 }
 
 void Matlab_PID_Test_Start(uint8_t motor_id, char dir_char, float rel_target_deg, float kp, float kd, float time_s) {
-    matlab_pid_test.duration_ms = (uint32_t)(time_s * 1000.0f);
+    matlab_pid_test.duration_ms = (uint32_t)(time_s * 1000.0f) + 2000; // Add 2-second initial hold
     matlab_pid_test.motor_id = motor_id;
     matlab_pid_test.Kp = kp;
     matlab_pid_test.Kd = kd;
@@ -516,6 +524,8 @@ void Matlab_PID_Test_Start(uint8_t motor_id, char dir_char, float rel_target_deg
     else if (motor_id == 4) enc_pos_val = enc4_pos;
 
     float start_deg = Encoder_To_Angle(enc_pos_val, ENCODER_PPR, UNIT_DEG);
+    
+    matlab_pid_test.start_deg = start_deg;
     
     // dir_char 'n' means negative offset, 't' means positive offset
     matlab_pid_test.target_deg = start_deg + ((dir_char == 'n') ? -rel_target_deg : rel_target_deg);
@@ -577,8 +587,10 @@ void Matlab_PID_Test_Service(void) {
     }
     prev_enc = enc_pos_val;
     
-    float error = matlab_pid_test.target_deg - current_deg;
     float current_time_s = elapsed_time / 1000.0f;
+    
+    float active_target_deg = (elapsed_time < 2000) ? matlab_pid_test.start_deg : matlab_pid_test.target_deg;
+    float error = active_target_deg - current_deg;
     
     uint8_t dir;
     float freq = 0.0f;
@@ -597,7 +609,7 @@ void Matlab_PID_Test_Service(void) {
     }
     
     // Output format for MATLAB: time(s), Ref angle, current encoder value (in deg), encoder velocity value (in deg/s), kp value, frequency (Hz)
-    UART_Printf("[MOTOR_KP_TUNE] %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\r\n", current_time_s, matlab_pid_test.target_deg, current_deg, velocity, matlab_pid_test.Kp, freq);
+    UART_Printf("[MOTOR_KP_TUNE] %.4f, %.4f, %.4f, %.4f, %.4f, %.4f\r\n", current_time_s, active_target_deg, current_deg, velocity, matlab_pid_test.Kp, freq);
     
     if (elapsed_time >= matlab_pid_test.duration_ms) {
         matlab_pid_test.active = 0;
