@@ -1,0 +1,19 @@
+[
+  {
+    "label": "C: build active file",
+    "command": "mkdir -p \"$ZED_WORKTREE_ROOT\"/build && gcc -std=c17 -Wall -Wextra -g \"$ZED_DIRNAME\"/*.c -o \"$ZED_WORKTREE_ROOT\"/build/$ZED_STEM",
+    "shell": "system",
+    "reveal": "always",
+    "hide": "never",
+    "save": "current",
+  },
+  {
+    "label": "C: run active file",
+    "command": "mkdir -p \"$ZED_WORKTREE_ROOT\"/build && gcc -std=c17 -Wall -Wextra -g \"$ZED_DIRNAME\"/*.c -o \"$ZED_WORKTREE_ROOT\"/build/$ZED_STEM && \"$ZED_WORKTREE_ROOT\"/build/$ZED_STEM",
+    "cwd": "$ZED_DIRNAME",
+    "shell": "system",
+    "reveal": "always",
+    "hide": "never",
+    "save": "current",
+  },
+]

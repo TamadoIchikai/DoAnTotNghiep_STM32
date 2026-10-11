@@ -1,3 +1,7 @@
 Debug/
 OUT/
 !.gitignore
+arm-gnu-toolchain/
+*.bin
+*.elf*
+*.o
