@@ -1,7 +1,4 @@
-Debug/
-OUT/
 !.gitignore
 arm-gnu-toolchain/
-*.bin
-*.elf*
-*.o
+debug/
+bare-metal-programming-guide/
